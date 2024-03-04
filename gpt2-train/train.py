@@ -288,7 +288,7 @@ def main():
         "use_new_attn": True,
         "offset": 4,
         "neg_version": True,
-        "include_o": True,
+        "include_o": False,
         "num_validation_batches": 25,
         "validate_every": 1000,
         "dataset_name": "wikitext",
