@@ -326,7 +326,7 @@ def main():
         "low_cpu_mem_usage": False,
         # "max_grad_norm": None,
         "max_grad_norm": 1.0,
-        "hf_path": "/home/azureuser/.cache/huggingface",
+        "hf_path": None,
     }
 
 
