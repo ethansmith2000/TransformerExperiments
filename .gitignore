@@ -1,0 +1,3 @@
+*.cpython*
+*_output*
+*wandb*

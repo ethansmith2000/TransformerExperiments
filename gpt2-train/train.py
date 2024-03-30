@@ -123,8 +123,46 @@ class Conv1D(nn.Module):
         x = x.view(size_out)
         return x
 
+
+class Activation(nn.Module):
+
+    def __init__(self, activation_type: str = 'relu'):
+        super().__init__()
+        self.activation_type = activation_type
+        if activation_type == 'relu':
+            self.activation = nn.ReLU()
+        elif activation_type == 'gelu':
+            self.activation = nn.GELU()
+        elif activation_type == 'silu':
+            self.activation = nn.SiLU()
+        elif activation_type == 'tanh':
+            self.activation = nn.Tanh()
+        elif activation_type == 'sin':
+            self.activation = lambda x: torch.sin(x) + (x/2)
+
+    def forward(self, x):
+        return self.activation(x)
+
+
+class GPT2MLP(nn.Module):
+    def __init__(self, config, activation_type='gelu'):
+        super().__init__()
+        embed_dim = config.hidden_size
+        intermediate_size = embed_dim * 4
+        self.c_fc = Conv1D(intermediate_size, embed_dim)
+        self.c_proj = Conv1D(embed_dim, intermediate_size)
+        self.act = Activation(activation_type=activation_type)
+        self.dropout = nn.Dropout(config.resid_pdrop)
+
+    def forward(self, hidden_states: Optional[Tuple[torch.FloatTensor]]) -> torch.FloatTensor:
+        hidden_states = self.c_fc(hidden_states)
+        hidden_states = self.act(hidden_states)
+        hidden_states = self.c_proj(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        return hidden_states
+
 class NewGPT2Attention(GPT2Attention):
-    def __init__(self, config, is_cross_attention=False, layer_idx=None, offset=5, neg_version=False, include_o=False, normalized=False, learnable_softmax=False):
+    def __init__(self, config, is_cross_attention=False, layer_idx=None, offset=5, neg_version=False, include_o=False, normalized=False, learnable_softmax=False, inner_offset=0):
         super().__init__(config, is_cross_attention=False, layer_idx=None)
         self.neg_version = neg_version
         self.offset = offset
@@ -140,9 +178,14 @@ class NewGPT2Attention(GPT2Attention):
             self.c_proj_2 = Conv1D(self.embed_dim, self.embed_dim)
         else:
             self.c_proj_2 = None
+
+        self.inner_offset = inner_offset
+
+        self.pos_weight = nn.Parameter(torch.ones(1,self.num_heads,1,1))
+        self.neg_weight = nn.Parameter(torch.ones(1,self.num_heads,1,1))
         
-    def kernel(self, x):
-        return torch.exp(torch.abs(x) - self.offset)
+    # def kernel(self, x):
+    #     return torch.exp(torch.abs(x + self.inner_offset) - self.offset)
 
     def _attn(self, query, key, value, value2, attention_mask=None, head_mask=None):
         # scale = query.size(-1) ** 0.5
@@ -167,36 +210,47 @@ class NewGPT2Attention(GPT2Attention):
             # if only "normal" attention layer implements causal mask
             query_length, key_length = query.size(-2), key.size(-2)
             causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
-            mask_value = 0
+            mask_value_min = torch.finfo(attn_weights.dtype).min
+            # mask_value_max = torch.finfo(attn_weights.dtype).max
             # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
             # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-            mask_value = torch.full([], mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
-            attn_weights = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value)
+            mask_value_min = torch.full([], mask_value_min, dtype=attn_weights.dtype, device=attn_weights.device)
+            # mask_value_max = torch.full([], mask_value_max, dtype=attn_weights.dtype, device=attn_weights.device)
+            attn_weights_pos = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value_min)
+            # attn_weights_neg = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value_max)
 
         if attention_mask is not None:
             # Apply the attention mask
-            attn_weights = attn_weights + attention_mask
+            attn_weights_pos = attn_weights_pos + attention_mask
 
         #####
-        value_mask = (attn_weights > 0).to(attn_weights.dtype)
-        attn_weights = self.kernel(attn_weights)
-        attn_weights = attn_weights / torch.sum(attn_weights, dim=-1, keepdim=True)
+        # value_mask = (attn_weights > 0).to(attn_weights.dtype)
+        attn_weights_pos = torch.exp(attn_weights_pos)
+        attn_weights_neg = torch.where(causal_mask, 1 / (attn_weights_pos + 1e-6), torch.zeros_like(attn_weights_pos))
+        attn_weights_pos = attn_weights_pos / torch.sum(attn_weights_pos, dim=-1, keepdim=True)
+        attn_weights_neg = attn_weights_neg / torch.sum(attn_weights_neg, dim=-1, keepdim=True)
+
+
+        # attn_weights_neg = torch.exp(attn_weights_neg * -1)
+        # attn_weights_neg = attn_weights_neg / torch.sum(attn_weights_neg, dim=-1, keepdim=True)
         #####
 
         # attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
         # Downcast (if necessary) back to V's dtype (if in mixed-precision) -- No-Op otherwise
-        attn_weights = attn_weights.type(value.dtype)
-        attn_weights = self.attn_dropout(attn_weights)
+        attn_weights_pos = attn_weights_pos.type(value.dtype)
+        attn_weights_pos = self.attn_dropout(attn_weights_pos)
+        attn_weights_neg = attn_weights_neg.type(value.dtype)
+        attn_weights_neg = self.attn_dropout(attn_weights_neg)
 
         # Mask heads if we want to
         if head_mask is not None:
-            attn_weights = attn_weights * head_mask
+            attn_weights_pos = attn_weights_pos * head_mask
 
-        attn_output_one = torch.matmul(attn_weights * value_mask, value)
-        attn_output_two = torch.matmul(attn_weights * (1-value_mask), value2)
+        attn_output_one = torch.matmul(attn_weights_pos, value)
+        attn_output_two = torch.matmul(attn_weights_neg, value2)
 
-        return attn_output_one, attn_output_two, attn_weights
+        return attn_output_one, attn_output_two, attn_weights_pos
 
     def forward(
         self,
@@ -246,7 +300,7 @@ class NewGPT2Attention(GPT2Attention):
             attn_output_two = self.c_proj_2(attn_output_two)
             attn_output = attn_output_one + attn_output_two
         else:
-            attn_output = attn_output_one + attn_output_two
+            attn_output = attn_output_one * self.pos_weight + attn_output_two * self.neg_weight
             attn_output = self._merge_heads(attn_output, self.num_heads, self.head_dim)
             attn_output = self.c_proj(attn_output)
             
@@ -259,12 +313,31 @@ class NewGPT2Attention(GPT2Attention):
         return outputs  # a, present, (attentions)
 
 
-def patch_attn(model, offset=5, include_o=False, neg_version=False):
+def patch_attn(model, offset=5, include_o=False, neg_version=False, inner_offset=0, alternate=False):
     conf = model.config
+    idx = 0
+    if alternate:
+        indices = [1,3,5,7,9]
+    else:
+        indices = [n for n in range(30)]
+
     for n,m in model.named_modules():
         if hasattr(m, "attn"):
-            del m.attn
-            m.add_module("attn", NewGPT2Attention(conf, is_cross_attention=False, layer_idx=None, offset=offset, include_o=include_o, neg_version=neg_version))
+            if idx in indices:
+                del m.attn
+                m.add_module("attn", NewGPT2Attention(conf, is_cross_attention=False, layer_idx=None, offset=offset, include_o=include_o, neg_version=neg_version, inner_offset=inner_offset))
+                print("activated", idx)
+            idx += 1
+            print('current idx', idx)
+
+
+def patch_mlp(model, activation_type):
+    idx = 0
+    for n,m in model.named_modules():
+        if hasattr(m, "mlp"):
+            del m.mlp
+            m.add_module("mlp", GPT2MLP(model.config, activation_type=activation_type[idx]))
+            idx += 1
 
 
 
@@ -287,8 +360,14 @@ def main():
     args = {
         "use_new_attn": True,
         "offset": 4,
-        "neg_version": True,
+        "neg_version": False,
         "include_o": False,
+        "inner_offset": 0.0,
+        "alternate": False,
+        "activations": ["gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu"],
+        # "activations": ["gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu"],
+
+
         "num_validation_batches": 25,
         "validate_every": 1000,
         "dataset_name": "wikitext",
@@ -301,7 +380,7 @@ def main():
         "config_name": None,
         "tokenizer_name": None,
         "use_slow_tokenizer": False,
-        "per_device_train_batch_size": 24,
+        "per_device_train_batch_size": 28,
         "learning_rate": 5.0e-5,
         "weight_decay": 0.01,
         "num_train_epochs": 2,
@@ -309,15 +388,12 @@ def main():
         "gradient_accumulation_steps": 1,
         "lr_scheduler_type": "linear",
         "num_warmup_steps": 250,
-        "seed": None,
+        "seed": 123,
         "model_type": None,
         "block_size": None,
         "preprocessing_num_workers": 10,
         "overwrite_cache": False,
         "no_keep_linebreaks": False,
-        "push_to_hub": False,
-        "hub_model_id": None,
-        "hub_token": None,
         "trust_remote_code": False,
         "checkpointing_steps": None,
         "resume_from_checkpoint": None,
@@ -325,22 +401,33 @@ def main():
         "report_to": "wandb",
         "low_cpu_mem_usage": False,
         # "max_grad_norm": None,
-        "max_grad_norm": 1.0,
+        "max_grad_norm": 0.2,
         "hf_path": None,
+        "base_output_dir": None,
     }
 
 
     if args["use_new_attn"]:
-        base_str = f"new_attn_{args['offset']}"
+        base_str = f"new_attn"#_{args['offset']}"
         if args["neg_version"]:
             base_str += "_neg"
         if args["include_o"]:
             base_str += "_o"
+        if args["alternate"]:
+            base_str += "_alt"
 
-        args["output_dir"] = f"/efs/ethan-home/{base_str}"
+        args["output_dir"] = f"{args['base_output_dir']}/{base_str}"
     else:
         base_str = "base"
-        args["output_dir"] = f"/efs/ethan-home/base"
+        args["output_dir"] = f"{args['base_output_dir']}/base"
+
+
+    unique_activations = list(set(args['activations']))
+    non_gelu = [a for a in unique_activations if a != "gelu"]
+    if len(non_gelu) > 0:
+        non_gelu = non_gelu[0]
+        indices = tuple([i+1 for i, a in enumerate(args['activations']) if a == non_gelu])
+        base_str = base_str + "_{}-{}".format(non_gelu, indices)
 
     args = SimpleNamespace(**args)
 
@@ -505,7 +592,12 @@ def main():
     model.gradient_checkpointing_enable()
 
     if args.use_new_attn:
-        patch_attn(model, offset=args.offset, include_o=args.include_o, neg_version=args.neg_version)
+        patch_attn(model, offset=args.offset, include_o=args.include_o, neg_version=args.neg_version, inner_offset=args.inner_offset, alternate=args.alternate)
+    
+    if len(args.activations) > 0:
+        patch_mlp(model, args.activations)
+
+    print(model)
 
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
