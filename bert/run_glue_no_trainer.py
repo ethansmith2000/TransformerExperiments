@@ -94,6 +94,16 @@ base_args = dict(
     with_tracking=False,
     report_to="all",
     ignore_mismatched_sizes=False,
+
+    dipole_attn=False,
+    last_n_layers = None,
+
+    # mixed_precision="fp16",
+    mixed_precision="bf16",
+
+    max_grad_norm = None,
+
+    gradient_checkpointing = False,
     
 )
 
@@ -108,7 +118,7 @@ def main():
     # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
     # in the environment
     accelerator = (
-        Accelerator(log_with=args.report_to, project_dir=args.output_dir) if args.with_tracking else Accelerator()
+        Accelerator(log_with=args.report_to, project_dir=args.output_dir, mixed_precision=args.mixed_precision) if args.with_tracking else Accelerator()
     )
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(

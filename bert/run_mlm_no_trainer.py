@@ -55,10 +55,7 @@ from transformers import (
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from types import SimpleNamespace
-
-
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.40.0.dev0")
+from patch import patch_model, gather_params
 
 logger = get_logger(__name__)
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
@@ -69,10 +66,14 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 base_args = dict(
     dataset_name="wikitext",
     dataset_config_name="wikitext-2-raw-v1",
+    # dataset_config_name = "wikitext-103-raw-v1",
     model_name_or_path="bert-base-uncased",
+    config_name=None,
+    tokenizer_name=None,
+    use_slow_tokenizer=False,
     output_dir="./mlm_no_trainer",
-    per_device_train_batch_size=4,
-    per_device_eval_batch_size=4,
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=32,
     learning_rate=5e-5,
     weight_decay=0.0,
     num_train_epochs=3,
@@ -94,6 +95,16 @@ base_args = dict(
     report_to="wandb",
     low_cpu_mem_usage=False,
 
+    dipole_attn=True,
+    last_n_layers = None,
+
+    # mixed_precision="fp16",
+    mixed_precision="bf16",
+
+    max_grad_norm = None,
+
+    gradient_checkpointing = False,
+
 )
 
 
@@ -113,7 +124,8 @@ def main():
         accelerator_log_kwargs["log_with"] = args.report_to
         accelerator_log_kwargs["project_dir"] = args.output_dir
 
-    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps, **accelerator_log_kwargs)
+    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps, mixed_precision=args.mixed_precision,
+     **accelerator_log_kwargs)
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -216,16 +228,30 @@ def main():
         )
 
     if args.model_name_or_path:
-        model = AutoModelForMaskedLM.from_pretrained(
-            args.model_name_or_path,
-            from_tf=bool(".ckpt" in args.model_name_or_path),
-            config=config,
-            low_cpu_mem_usage=args.low_cpu_mem_usage,
-            trust_remote_code=args.trust_remote_code,
-        )
+        if args.last_n_layers is not None:
+            model = AutoModelForMaskedLM.from_pretrained(
+                args.model_name_or_path,
+                from_tf=bool(".ckpt" in args.model_name_or_path),
+                config=config,
+                low_cpu_mem_usage=args.low_cpu_mem_usage,
+                trust_remote_code=args.trust_remote_code,
+            )
+        else:
+            model = AutoModelForMaskedLM.from_config(config, trust_remote_code=args.trust_remote_code)
     else:
         logger.info("Training new model from scratch")
         model = AutoModelForMaskedLM.from_config(config, trust_remote_code=args.trust_remote_code)
+
+
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+
+    #######
+    # Patch the model
+    if args.dipole_attn:
+        patch_model(model, dipole_attn=True, last_n_layers=args.last_n_layers)
+    print(f"Model: {model}")
+    #######
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -411,8 +437,9 @@ def main():
     if args.with_tracking:
         experiment_config = vars(args)
         # TensorBoard cannot log Enums, need the raw value
-        experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"].value
-        accelerator.init_trackers("mlm_no_trainer", experiment_config)
+        experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"]#.value
+        tracker_args = {"wandb": {"name": f"base_{args.last_n_layers}_grad_{args.max_grad_norm}_lr_{args.learning_rate}" if not args.dipole_attn else f"dipole_{args.last_n_layers}_grad_{args.max_grad_norm}_lr_{args.learning_rate}"}}
+        accelerator.init_trackers("mlm_no_trainer", experiment_config, init_kwargs=tracker_args)
 
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -461,6 +488,7 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(completed_steps)
 
+    grad_norm = None
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         if args.with_tracking:
@@ -478,6 +506,18 @@ def main():
                 if args.with_tracking:
                     total_loss += loss.detach().float()
                 accelerator.backward(loss)
+                if args.max_grad_norm is not None:
+                    grad_norm = accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                logs = {
+                    "loss": loss.detach().float(),
+                    "learning_rate": lr_scheduler.get_last_lr()[0],
+                    "epoch": epoch,
+                    "step": completed_steps,
+                }
+                if grad_norm is not None:
+                    logs["grad_norm"] = grad_norm
+                
+                accelerator.log(logs, step=completed_steps)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -520,7 +560,7 @@ def main():
                 {
                     "perplexity": perplexity,
                     "eval_loss": eval_loss,
-                    "train_loss": total_loss.item() / len(train_dataloader),
+                    # "train_loss": total_loss.item() / len(train_dataloader),
                     "epoch": epoch,
                     "step": completed_steps,
                 },

@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 
 
 class PatchedBertSelfAttention(nn.Module):
-    def __init__(self, config, position_embedding_type=None, dipole_attn=False):
+    def __init__(self, config, position_embedding_type=None, dipole_attn=False, second_o=False):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
@@ -41,6 +41,10 @@ class PatchedBertSelfAttention(nn.Module):
         self.pos_weights = nn.Parameter(torch.ones(1, self.num_attention_heads, 1, 1))
         self.neg_weights = nn.Parameter(torch.ones(1, self.num_attention_heads, 1, 1))
         self.value2 = nn.Linear(config.hidden_size, self.all_head_size)
+        if second_o:
+            self.o2 = nn.Linear(config.hidden_size, self.all_head_size)
+        else:
+            self.o2 = None
         ##########
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
@@ -126,19 +130,21 @@ class PatchedBertSelfAttention(nn.Module):
             attention_scores = attention_scores + attention_mask
 
         if self.dipole_attn:
-            attn_probs = torch.exp(attention_scores)
-            neg_probs = 1 / (attn_probs + 1e-6)
+            attn_probs = torch.softmax(attention_scores, dim=-1)
+            # attn_probs = self.dropout(attn_probs)
+            neg_probs = 1 / (attn_probs + 1e-9)
             if attention_mask is not None:
                 attn_mask = attention_mask < -1
                 neg_probs = torch.where(attn_mask, torch.zeros_like(neg_probs), neg_probs)
-            attn_probs = attn_probs / attn_probs.sum(dim=-1, keepdim=True)
-            attn_probs = self.dropout(attn_probs)
             neg_probs = neg_probs / neg_probs.sum(dim=-1, keepdim=True)
+
+            attn_probs = self.dropout(attn_probs)
             neg_probs = self.dropout(neg_probs)
 
-            pos_context_layer = torch.matmul(attn_probs, value_layer) * self.pos_weights
-            neg_context_layer = torch.matmul(neg_probs, value_2_layer) * self.neg_weights
-            context_layer = pos_context_layer + neg_context_layer
+            pos_context_layer = torch.matmul(attn_probs, value_layer)
+            neg_context_layer = torch.matmul(neg_probs, value_2_layer)
+            # context_layer = pos_context_layer * self.pos_weights + neg_context_layer * self.neg_weights
+            context_layer = pos_context_layer * torch.sigmoid(self.pos_weights) + neg_context_layer * (1-torch.sigmoid(self.pos_weights))
         else:
             # Normalize the attention scores to probabilities.
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
@@ -156,10 +162,11 @@ class PatchedBertSelfAttention(nn.Module):
         return outputs
 
 
-def patch_model(model, dipole_attn=False, last_n_layers=2):
+def patch_model(model, dipole_attn=False, last_n_layers=None):
     for i in range(len(model.bert.encoder.layer)):
-        if i <= len(model.bert.encoder.layer) - last_n_layers - 1:
-            continue
+        if last_n_layers is not None:
+            if i <= len(model.bert.encoder.layer) - last_n_layers - 1:
+                continue
         model.bert.encoder.layer[i].attention.self = PatchedBertSelfAttention(model.config, dipole_attn=dipole_attn)
         # also reinit weights of the other parts
         model.bert.encoder.layer[i].attention.output = transformers.models.bert.modeling_bert.BertSelfOutput(model.config)
@@ -167,14 +174,17 @@ def patch_model(model, dipole_attn=False, last_n_layers=2):
         model.bert.encoder.layer[i].output = transformers.models.bert.modeling_bert.BertOutput(model.config)
 
 
-def gather_params(model, last_n_layers=2):
+def gather_params(model, last_n_layers=None):
     params = {}
-    for n, p in model.named_parameters():
-        if '.layer.' in n:
-            layer_num = int(n.split('.')[3])
-            if layer_num >= len(model.bert.encoder.layer) - last_n_layers:
-                params[n] = p
-        else:
-            if not n in ['bert.embeddings.word_embeddings.weight', 'bert.embeddings.position_embeddings.weight', 'bert.embeddings.token_type_embeddings.weight', 'bert.embeddings.LayerNorm.weight', 'bert.embeddings.LayerNorm.bias']:
-                params[n] = p
+    if last_n_layers is not None:
+        for n, p in model.named_parameters():
+            if '.layer.' in n:
+                layer_num = int(n.split('.')[3])
+                if layer_num >= len(model.bert.encoder.layer) - last_n_layers:
+                    params[n] = p
+            else:
+                if not n in ['bert.embeddings.word_embeddings.weight', 'bert.embeddings.position_embeddings.weight', 'bert.embeddings.token_type_embeddings.weight', 'bert.embeddings.LayerNorm.weight', 'bert.embeddings.LayerNorm.bias']:
+                    params[n] = p
+    else:
+        params = {k: v for k, v in model.named_parameters()}
     return params
