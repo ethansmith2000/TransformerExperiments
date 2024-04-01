@@ -8,7 +8,7 @@ from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_l
 
 
 class NewT5Attention(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False, dipole_attn=False, second_o=False):
+    def __init__(self, config, has_relative_attention_bias=False, dipole_attn=False, sigmoid_weight=False, decoupled=False):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.has_relative_attention_bias = has_relative_attention_bias
@@ -34,14 +34,14 @@ class NewT5Attention(nn.Module):
         #######
         self.dipole_attn = dipole_attn
         self.pos_weights = nn.Parameter(torch.ones(1, self.n_heads, 1, 1))
-        self.neg_weights = nn.Parameter(torch.ones(1, self.n_heads, 1, 1))
+        if decoupled:
+            self.neg_weights = nn.Parameter(torch.ones(1, self.n_heads, 1, 1))
+        else:
+            self.neg_weights = None
         self.value2 = nn.Linear(self.d_model, self.inner_dim)
 
-
-        if second_o:
-            self.o2 = nn.Linear(self.inner_dim, self.d_model, bias=False)
-        else:
-            self.o2 = None
+        self.sigmoid_weight = sigmoid_weight
+        self.decoupled = decoupled
         #######
 
 
@@ -263,20 +263,15 @@ class NewT5Attention(nn.Module):
         attn_output_1 = torch.matmul(attn_weights, value_states)
         attn_output_2 = torch.matmul(neg_weights, value2_states)
 
-        if self.o2 is not None:
-            # attn_output_1 = self.o(unshape(attn_output_1 * torch.sigmoid(self.pos_weights)))
-            # attn_output_2 = self.o2(unshape(attn_output_2 * torch.sigmoid(self.neg_weights)))
-            # attn_output_1 = self.o(unshape(attn_output_1 * self.pos_weights))
-            # attn_output_2 = self.o2(unshape(attn_output_2 * self.neg_weights))
-            attn_output_1 = self.o(unshape(attn_output_1 * torch.sigmoid(self.pos_weights)))
-            attn_output_2 = self.o2(unshape(attn_output_2 * (1 - torch.sigmoid(self.pos_weights))))
-            attn_output = attn_output_1 + attn_output_2
+        pos_weight = torch.sigmoid(self.pos_weights) if self.sigmoid_weight else self.pos_weights
+        if self.decoupled:
+            neg_weight = torch.sigmoid(self.neg_weights) if self.sigmoid_weight else self.neg_weights
         else:
-            # attn_output = attn_output_1 * torch.sigmoid(self.pos_weights) + attn_output_2 * torch.sigmoid(self.neg_weights)
-            # attn_output = attn_output_1 * self.pos_weights + attn_output_2 * self.neg_weights
-            attn_output = attn_output_1 * torch.sigmoid(self.pos_weights) + attn_output_2 * (1 - torch.sigmoid(self.pos_weights))
-            attn_output = unshape(attn_output)  # (batch_size, seq_length, dim)
-            attn_output = self.o(attn_output)
+            neg_weight = 1 - pos_weight
+
+        attn_output = attn_output_1 * pos_weight + attn_output_2 * neg_weight
+        attn_output = unshape(attn_output)  # (batch_size, seq_length, dim)
+        attn_output = self.o(attn_output)
 
         present_key_value_state = (key_states, value_states) if (self.is_decoder and use_cache) else None
         outputs = (attn_output,) + (present_key_value_state,) + (position_bias,)
@@ -286,8 +281,14 @@ class NewT5Attention(nn.Module):
         return outputs
 
 
-def patch_attn(model, second_o=False):
+def patch_attn(model, sigmoid_weight=False, decoupled=False, encoder=True, decoder_self=True, decoder_cross=True):
     idx = 0
     config = model.config
-    for i, layer in enumerate(model.encoder.block):
-        model.encoder.block[i].layer[0].SelfAttention = NewT5Attention(config, has_relative_attention_bias=True, dipole_attn=True, second_o=second_o)
+    if encoder:
+        for i, layer in enumerate(model.encoder.block):
+            model.encoder.block[i].layer[0].SelfAttention = NewT5Attention(config, has_relative_attention_bias=True, dipole_attn=True, sigmoid_weight=sigmoid_weight, decoupled=decoupled)
+    for i, layer in enumerate(model.decoder.block):
+        if decoder_self:
+            model.decoder.block[i].layer[0].SelfAttention = NewT5Attention(config, has_relative_attention_bias=True, dipole_attn=True, sigmoid_weight=sigmoid_weight, decoupled=decoupled)
+        if decoder_cross:
+            model.decoder.block[i].layer[1].EncDecAttention = NewT5Attention(config, has_relative_attention_bias=True, dipole_attn=True, sigmoid_weight=sigmoid_weight, decoupled=decoupled)

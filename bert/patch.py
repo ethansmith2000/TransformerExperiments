@@ -162,16 +162,28 @@ class PatchedBertSelfAttention(nn.Module):
         return outputs
 
 
-def patch_model(model, dipole_attn=False, last_n_layers=None):
+def patch_model(model, dipole_attn=False, last_n_layers=None, alternate=None): #["even", "odd"]
+    if alternate == "even":
+        indices = [i for i in range(len(model.bert.encoder.layer)) if i % 2 == 0]
+    elif alternate == "odd":
+        indices = [i for i in range(len(model.bert.encoder.layer)) if i % 2 == 1]
+    elif alternate == "first_half":
+        indices = [i for i in range(len(model.bert.encoder.layer)//2)]
+    elif alternate == "second_half":
+        indices = [i for i in range(len(model.bert.encoder.layer)//2, len(model.bert.encoder.layer))]
+    else:
+        indices = [i for i in range(len(model.bert.encoder.layer))]
+
     for i in range(len(model.bert.encoder.layer)):
         if last_n_layers is not None:
             if i <= len(model.bert.encoder.layer) - last_n_layers - 1:
                 continue
-        model.bert.encoder.layer[i].attention.self = PatchedBertSelfAttention(model.config, dipole_attn=dipole_attn)
-        # also reinit weights of the other parts
-        model.bert.encoder.layer[i].attention.output = transformers.models.bert.modeling_bert.BertSelfOutput(model.config)
-        model.bert.encoder.layer[i].intermediate = transformers.models.bert.modeling_bert.BertIntermediate(model.config)
-        model.bert.encoder.layer[i].output = transformers.models.bert.modeling_bert.BertOutput(model.config)
+        if i in indices:
+            model.bert.encoder.layer[i].attention.self = PatchedBertSelfAttention(model.config, dipole_attn=dipole_attn)
+            # also reinit weights of the other parts
+            model.bert.encoder.layer[i].attention.output = transformers.models.bert.modeling_bert.BertSelfOutput(model.config)
+            model.bert.encoder.layer[i].intermediate = transformers.models.bert.modeling_bert.BertIntermediate(model.config)
+            model.bert.encoder.layer[i].output = transformers.models.bert.modeling_bert.BertOutput(model.config)
 
 
 def gather_params(model, last_n_layers=None):

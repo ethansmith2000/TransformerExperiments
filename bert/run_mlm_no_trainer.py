@@ -65,8 +65,8 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 base_args = dict(
     dataset_name="wikitext",
-    dataset_config_name="wikitext-2-raw-v1",
-    # dataset_config_name = "wikitext-103-raw-v1",
+    # dataset_config_name="wikitext-2-raw-v1",
+    dataset_config_name = "wikitext-103-raw-v1",
     model_name_or_path="bert-base-uncased",
     config_name=None,
     tokenizer_name=None,
@@ -76,7 +76,7 @@ base_args = dict(
     per_device_eval_batch_size=32,
     learning_rate=5e-5,
     weight_decay=0.0,
-    num_train_epochs=3,
+    num_train_epochs=4,
     max_train_steps=None,
     gradient_accumulation_steps=1,
     lr_scheduler_type=SchedulerType.LINEAR,
@@ -103,7 +103,8 @@ base_args = dict(
 
     max_grad_norm = None,
 
-    gradient_checkpointing = False,
+    gradient_checkpointing = True,
+    alternate = "second_half",
 
 )
 
@@ -249,7 +250,7 @@ def main():
     #######
     # Patch the model
     if args.dipole_attn:
-        patch_model(model, dipole_attn=True, last_n_layers=args.last_n_layers)
+        patch_model(model, dipole_attn=True, last_n_layers=args.last_n_layers, alternate=args.alternate)
     print(f"Model: {model}")
     #######
 
@@ -438,7 +439,12 @@ def main():
         experiment_config = vars(args)
         # TensorBoard cannot log Enums, need the raw value
         experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"]#.value
-        tracker_args = {"wandb": {"name": f"base_{args.last_n_layers}_grad_{args.max_grad_norm}_lr_{args.learning_rate}" if not args.dipole_attn else f"dipole_{args.last_n_layers}_grad_{args.max_grad_norm}_lr_{args.learning_rate}"}}
+        name = f"base_{args.last_n_layers}_grad_{args.max_grad_norm}_lr_{args.learning_rate}"
+        if args.dipole_attn:
+            name = f"dipole_{args.last_n_layers}_grad_{args.max_grad_norm}_lr_{args.learning_rate}"
+            if args.alternate is not None:
+                name = name + f"_alt_{args.alternate}"
+        tracker_args = {"wandb": {"name": name}}
         accelerator.init_trackers("mlm_no_trainer", experiment_config, init_kwargs=tracker_args)
 
     # Train!

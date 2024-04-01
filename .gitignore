@@ -1,3 +1,5 @@
 *.cpython*
 *_output*
 *wandb*
+*.sh
+slurm

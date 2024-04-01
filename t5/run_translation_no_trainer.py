@@ -97,14 +97,14 @@ base_args = dict(
     per_device_eval_batch_size=64,
     learning_rate=1e-4,
     weight_decay=0.0,
-    num_train_epochs=1,
+    num_train_epochs=12,
     max_train_steps=None,
     gradient_accumulation_steps=1,
     lr_scheduler_type="linear",
     num_warmup_steps=0,
     # num_warmup_steps=100,
     output_dir=None,
-    seed=123,
+    seed=None,
     model_type=None,
     push_to_hub=False,
     hub_model_id=None,
@@ -115,12 +115,17 @@ base_args = dict(
     with_tracking=True,
     report_to="wandb",
 
-    dipole_attn=True,
-    second_o=False,
+    dipole_attn=False,
     mixed_precision="bf16",
     gradient_checkpointing=True,
     max_grad_norm=None,
     hf_cache=None,
+    sigmoid_weight=False,
+    decoupled=False,
+
+    encoder_patch=True,
+    decoder_self_patch=False,
+    decoder_cross_patch=False,
 )
 
 base_args["source_prefix"] = f"translate English to Español: "
@@ -246,7 +251,7 @@ def main():
 
     ############
     if args.dipole_attn:
-        patch_attn(model, args.second_o)
+        patch_attn(model, args.sigmoid_weight, args.decoupled)
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -402,7 +407,20 @@ def main():
             experiment_config = vars(args)
             # TensorBoard cannot log Enums, need the raw value
             experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"]#.value
-            tracker_args = {"wandb": {"name": f"base_lr_{args.learning_rate}" if not args.dipole_attn else f"dipole_lr_{args.learning_rate}_second_o_{args.second_o}"}}
+            name = f"base_lr_{args.learning_rate}" 
+            if args.dipole_attn:
+                name = f"dipole_lr_{args.learning_rate}"
+                if args.encoder_patch:
+                    name = f"{name}_enc"
+                if args.decoder_self_patch:
+                    name = f"{name}_dec_self"
+                if args.decoder_cross_patch:
+                    name = f"{name}_dec_cross"
+                if args.sigmoid_weight:
+                    name = f"{name}_sigmoid"
+                if args.decoupled:
+                    name = f"{name}_decoupled"
+            tracker_args = {"wandb": {"name": name}}
             accelerator.init_trackers("translation_no_trainer", experiment_config,init_kwargs=tracker_args)
 
     metric = evaluate.load("sacrebleu")
@@ -477,6 +495,9 @@ def main():
             #     total_loss += loss.detach().float()
             loss = loss / args.gradient_accumulation_steps
             accelerator.backward(loss)
+            # for n, p in model.named_parameters():
+            #     if p.grad is None:
+            #         print("found unused param", n)
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 logs = {
                     "loss": loss.item(),
