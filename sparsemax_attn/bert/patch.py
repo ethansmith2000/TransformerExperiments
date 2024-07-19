@@ -7,8 +7,6 @@ from typing import Optional, Tuple
 
 #model.bert.encoder.layer[i].attention.self
 
-
-
 class PatchedBertSelfAttention(nn.Module):
     def __init__(self, config, position_embedding_type=None, dipole_attn=False):
         super().__init__()

@@ -1,3 +1,8 @@
 *.cpython*
 *_output*
 *wandb*
+
+*.log
+*.json
+*wandb*
+*.safetensors*
