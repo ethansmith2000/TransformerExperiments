@@ -27,7 +27,6 @@ import time
 from utils import progress_bar, load_data, load_model, train, test
 from randomaug import RandAugment
 
-
 default_args = dict(
     lr = 1e-4,
     opt = "adam",
@@ -46,6 +45,7 @@ default_args = dict(
     num_classes=10,
     mlp_dim = 1024,
     compile=False,
+    mode = "knorm"
 )
 
 
@@ -54,7 +54,6 @@ def train_model(args):
         pred_labels = net_forward(inputs)
         loss = nn.CrossEntropyLoss()(pred_labels, targets)
         return loss, pred_labels
-
 
     args = SimpleNamespace(**args)
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -86,6 +85,10 @@ def train_model(args):
     if args.wandb:
         import wandb
         watermark = "run"
+        if args.mode == "knorm":
+            watermark = "k_" + watermark
+        elif args.mode == "qknorm":
+            watermark = "qk_" + watermark
         wandb.init(project="cifar10-challange", name=watermark)
         wandb.config.update(args)
 

@@ -6,3 +6,8 @@
 *.json
 *wandb*
 *.safetensors*
+*ckpt*
+data
+log
+model-output
+__pycache__

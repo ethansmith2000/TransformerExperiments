@@ -5,23 +5,13 @@ from torch import nn
 
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
-
-from .common import Activation, LinearAct
+from .activations import Activation
 
 # helpers
 
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
 
-# classes
-
-class PreNorm(nn.Module):
-    def __init__(self, dim, fn):
-        super().__init__()
-        self.norm = nn.LayerNorm(dim)
-        self.fn = fn
-    def forward(self, x, **kwargs):
-        return self.fn(self.norm(x), **kwargs)
 
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout = 0., act="gelu", act_power=1):
@@ -47,37 +37,34 @@ class Attention(nn.Module):
             nn.Linear(inner_dim, dim),
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
-        # self.val_act = nn.Identity() if val_act is None else Activation(val_act)
-        # self.post_attn_act = nn.Identity() if post_attn_act is None else Activation(post_attn_act)
-        self.val_act = LinearAct(inner_dim, inner_dim, activation_type=val_act, power=power, pre_act=True) if val_act is not None else nn.Identity()
-        self.post_attn_act = LinearAct(dim, dim, activation_type=post_attn_act, power=power, pre_act=True) if post_attn_act is not None else nn.Identity()
 
 
     def forward(self, x):
         q, k, v = self.to_qkv(x).chunk(3, dim = -1)
-        v = self.val_act(v)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), (q,k,v))
         out = torch.nn.functional.scaled_dot_product_attention(q, k, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
-        out = self.post_attn_act(out)
         return self.to_out(out)
 
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0., acts="gelu", act_powers=1, val_act=None, post_attn_act=None, attn_power=1.0):
         super().__init__()
-        self.layers = nn.ModuleList([])
+        self.attn_norms = nn.ModuleList([])
+        self.ff_norms = nn.ModuleList([])
+        self.attns = nn.ModuleList([])
+        self.ffs = nn.ModuleList([])
         acts = [acts] * depth if isinstance(acts, str) else acts
         act_powers = [act_powers] * depth if (isinstance(act_powers, int) or isinstance(act_powers, float)) else act_powers
         for i in range(depth):
-            self.layers.append(nn.ModuleList([
-                PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout, val_act=val_act, post_attn_act=post_attn_act, power=attn_power)),
-                PreNorm(dim, FeedForward(dim, mlp_dim, dropout, acts[i], act_powers[i]))
-            ]))
+            self.attn_norms.append(nn.LayerNorm(dim))
+            self.ff_norms.append(nn.LayerNorm(dim))
+            self.attns.append(Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout, val_act=val_act, post_attn_act=post_attn_act, power=attn_power))
+            self.ffs.append(FeedForward(dim, mlp_dim, dropout, acts[i], act_powers[i]))
     def forward(self, x):
-        for attn, ff in self.layers:
-            x = attn(x) + x
-            x = ff(x) + x
-        return x
+        for attn_norm, attn, ff_norm, ff in zip(self.attn_norms, self.attns, self.ff_norms, self.ffs)
+            x = attn(attn_norm(x)) + x
+            x = ff(ff_norm(x)) + x
+        return xs
 
 class ViT(nn.Module):
     def __init__(self, *, 

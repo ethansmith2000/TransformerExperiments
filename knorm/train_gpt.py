@@ -110,28 +110,25 @@ class Conv1D(nn.Module):
 
 class NewGPT2Attention(GPT2Attention):
     def __init__(self, config, is_cross_attention=False, layer_idx=None, 
-                        normalized="half",# ["none", "half", "full"]
-                        learn_temp=False,
+                        mode="knorm",# ["none", "qknorm", "knorm"]
                     ):
         super().__init__(config, is_cross_attention=False, layer_idx=None)
-        self.do_base_scale = (normalized != "half" and normalized != "full") and not learn_temp
-        self.query_norm = normalize if normalized == "full" else nn.Identity()
-        self.key_norm = normalize if (normalized == "full" or normalized == "half") else nn.Identity()
+        self.query_norm = normalize if mode == "qknorm" else nn.Identity()
+        self.key_norm = normalize if (mode == "qknorm" or mode == "knorm") else nn.Identity()
+        self.scaling = self.head_dim ** -0.5
         self.softmax_temp = None
-        if learn_temp or normalized == "full":
-            if normalized == "full":
-                base_scale = 10
-            elif normalized == "half":
-                base_scale = 1
-            else:
-                base_scale = self.head_dim ** -0.5
-            self.softmax_temp = nn.Parameter(torch.ones(1, self.num_heads, 1, 1) * base_scale, requires_grad=learn_temp)
+        if mode == "knorm" or mode == "qknorm":
+            self.softmax_temp = nn.Parameter(torch.ones(1, self.num_heads, 1, 1) * 10, requires_grad=True)
+        if mode == "qknorm":
+            self.scaling = 1.0
+        print(mode)
             
     def _attn(self, query, key, value, attention_mask=None, head_mask=None):
         query = self.query_norm(query)
         key = self.key_norm(key)
         if self.softmax_temp is not None:
-            query = query * self.softmax_temp
+            key = key * self.softmax_temp
+        query = query * self.scaling
 
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
 
@@ -169,7 +166,7 @@ class NewGPT2Attention(GPT2Attention):
         return attn_output, attn_weights
 
 
-def patch_attn(model, normalized="half", learn_temp=False):
+def patch_attn(model, mode="knorm"):
     conf = model.config
     idx = 0
 
@@ -177,7 +174,7 @@ def patch_attn(model, normalized="half", learn_temp=False):
         if hasattr(m, "attn"):
             # if idx in indices:
             del m.attn
-            m.add_module("attn", NewGPT2Attention(conf, is_cross_attention=False, layer_idx=None, normalized=normalized, learn_temp=learn_temp))
+            m.add_module("attn", NewGPT2Attention(conf, is_cross_attention=False, layer_idx=None, mode=mode))
             # print("activated", idx)
             idx += 1
             # print('current idx', idx)
@@ -233,16 +230,13 @@ def main():
         "hf_path": None,
         "base_output_dir": "model-output",
 
-        "normalize": "full",
-        "learn_temp": True,
+        "mode": "knorm",
     }
 
 
     base_str = "base"
-    if args["normalize"] == "half" or args["normalize"] == "full":
-        base_str = f"norm-{args['normalize']}"
-    if args["learn_temp"]:
-        base_str += "-learn_temp"
+    if args["mode"] == "knorm" or args["mode"] == "knorm":
+        base_str = args["mode"]
     args["output_dir"] = f"{args['base_output_dir']}/{base_str}"
 
     args = SimpleNamespace(**args)
@@ -370,7 +364,7 @@ def main():
     )
     model.gradient_checkpointing_enable()
 
-    patch_attn(model, args.normalize, args.learn_temp)
+    patch_attn(model, args.mode)
 
     print(model)
     model = model.to(accelerator.device)
@@ -527,7 +521,7 @@ def main():
                     "name": f"{base_str}",
                 }
         }
-        accelerator.init_trackers("qknorm_half_gpt", experiment_config, init_kwargs=init_kwargs)
+        accelerator.init_trackers("knorm_gpt", experiment_config, init_kwargs=init_kwargs)
 
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
