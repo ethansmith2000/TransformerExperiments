@@ -1,53 +1,4 @@
 
-import argparse
-import json
-import logging
-import math
-import os
-import random
-from itertools import chain
-from pathlib import Path
-
-import datasets
-import torch
-from accelerate import Accelerator, DistributedType
-from accelerate.logging import get_logger
-from accelerate.utils import set_seed
-from datasets import load_dataset
-from huggingface_hub import Repository, create_repo
-from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
-
-import transformers
-from transformers import (
-    CONFIG_MAPPING,
-    MODEL_MAPPING,
-    AutoConfig,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    SchedulerType,
-    default_data_collator,
-    get_scheduler,
-)
-from transformers.utils import check_min_version, send_example_telemetry
-from types import SimpleNamespace
-
-import torch
-import torch.nn as nn
-from typing import Optional, Tuple, Union
-import time
-from transformers.models.gpt2.modeling_gpt2 import GPT2Attention
-
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-# check_min_version("4.39.0.dev0")
-
-logger = get_logger(__name__)
-
-# require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
-
-MODEL_CONFIG_CLASSES = list(MODEL_MAPPING.keys())
-MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
 
 
 class Conv1D(nn.Module):
@@ -178,4 +129,37 @@ def patch_mlp(model, activation_type, activation_powers):
             del m.mlp
             m.add_module("mlp", GPT2MLP(model.config, activation_type=activation_type[idx], power=activation_powers[idx]))
             idx += 1
+            
 
+
+def run_name():
+    base_str = "base"
+    if args["value_act"] is not None:
+        base_str = f"{base_str}_vact_{args['value_act']}"
+    if args["post_attn_act"] is not None:
+        base_str = f"{base_str}_pact_{args['post_attn_act']}"
+    args["output_dir"] = f"{args['base_output_dir']}/{base_str}"
+
+    unique_activations = list(set(args['activations']))
+    non_gelu = [a for a in unique_activations if a != "gelu"]
+    if len(non_gelu) > 0:
+        non_gelu = non_gelu[0]
+        indices = tuple([i+1 for i, a in enumerate(args['activations']) if a == non_gelu])
+        base_str = base_str + "_{}-{}".format(non_gelu, indices)
+
+    unique_powers = list(set(args['activation_powers']))
+    non_one = [p for p in unique_powers if p != 1]
+    if len(non_one) > 0:
+        non_one = non_one[0]
+        indices = tuple([i+1 for i, p in enumerate(args['activation_powers']) if p == non_one])
+        base_str = base_str + "_{}-{}".format(non_one, indices)
+
+
+extra_args = {
+
+        "activations": ["gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu", "gelu"],
+    "activation_powers": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+    "value_act": "leaky",
+    "post_attn_act": None,
+    "attn_power": 3.0,
+}

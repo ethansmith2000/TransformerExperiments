@@ -11,3 +11,4 @@ data
 log
 model-output
 __pycache__
+checkpoint

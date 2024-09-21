@@ -24,8 +24,9 @@ import pandas as pds
 import csv
 import time
 
-from utils import progress_bar, load_data, load_model, train, test
-from randomaug import RandAugment
+from common.cifar_utils import progress_bar, load_data, train, test
+from common.vit import ViT
+from common.randomaug import RandAugment
 
 
 default_args = dict(
@@ -50,11 +51,11 @@ default_args = dict(
 
 
 def train_model(args):
+    
     def loss_fn(net_fwd, inputs, targets):
         pred_labels = net_forward(inputs)
         loss = nn.CrossEntropyLoss()(pred_labels, targets)
         return loss, pred_labels
-
 
     args = SimpleNamespace(**args)
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -62,7 +63,12 @@ def train_model(args):
     args.start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
     trainloader, testloader = load_data(args)
-    net, net_forward = load_model(args)
+
+    net = ViT()
+    if args.compile:
+        net_forward = torch.compile(net.forward)
+    else:
+        net_forward = net.forward
 
     print("NUM PARAMS: ", sum([p.numel() for p in net.parameters()]))
 

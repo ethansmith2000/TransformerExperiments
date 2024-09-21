@@ -12,9 +12,7 @@ import math
 
 import torch.nn as nn
 import torch.nn.init as init
-from models.convmixer import ConvMixer
 import torch
-from models import *
 import torchvision
 import torchvision.transforms as transforms
 from randomaug import RandAugment
@@ -132,138 +130,6 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
-
-
-def load_model(args):
-    # Model factory..
-    print('==> Building model..')
-    # net = VGG('VGG19')
-    if args.net=='res18':
-        net = ResNet18()
-    elif args.net=='vgg':
-        net = VGG('VGG19')
-    elif args.net=='res34':
-        net = ResNet34()
-    elif args.net=='res50':
-        net = ResNet50()
-    elif args.net=='res101':
-        net = ResNet101()
-    elif args.net=="convmixer":
-        # from paper, accuracy >96%. you can tune the depth and dim to scale accuracy and speed.
-        net = ConvMixer(256, 16, kernel_size=args.convkernel, patch_size=1, n_classes=10)
-    elif args.net=="mlpmixer":
-        from models.mlpmixer import MLPMixer
-        net = MLPMixer(
-        image_size = 32,
-        channels = 3,
-        patch_size = args.patch,
-        dim = 512,
-        depth = 6,
-        num_classes = 10
-    )
-    elif args.net=="vit_small":
-        from models.vit_small import ViT
-        net = ViT(
-        image_size = args.size,
-        patch_size = args.patch,
-        num_classes = 10,
-        dim = int(args.dim),
-        depth = 6,
-        heads = 8,
-        mlp_dim = 512,
-        dropout = 0.1,
-        emb_dropout = 0.1
-    )
-    elif args.net=="vit_tiny":
-        from models.vit_small import ViT
-        net = ViT(
-        image_size = args.size,
-        patch_size = args.patch,
-        num_classes = 10,
-        dim = int(args.dim),
-        depth = 4,
-        heads = 6,
-        mlp_dim = 256,
-        dropout = 0.1,
-        emb_dropout = 0.1
-    )
-    elif args.net=="simplevit":
-        from models.simplevit import SimpleViT
-        net = SimpleViT(
-        image_size = args.size,
-        patch_size = args.patch,
-        num_classes = 10,
-        dim = int(args.dim),
-        depth = 6,
-        heads = 8,
-        mlp_dim = 512
-    )
-    elif args.net=="vit":
-        # ViT for cifar10
-        from models.vit import ViT
-        net = ViT(
-        image_size = args.size,
-        patch_size = args.patch,
-        num_classes = 10,
-        dim = int(args.dim),
-        depth = 6,
-        heads = 8,
-        mlp_dim = args.mlp_dim,
-        dropout = 0.1,
-        emb_dropout = 0.1,
-        acts=args.acts,
-        act_powers=args.act_powers,
-        val_act=args.val_act,
-        post_attn_act=args.post_attn_act,
-        attn_power=args.attn_power
-    )
-    elif args.net=="vit_timm":
-        import timm
-        net = timm.create_model("vit_base_patch16_384", pretrained=True)
-        net.head = nn.Linear(net.head.in_features, 10)
-    elif args.net=="cait":
-        from models.cait import CaiT
-        net = CaiT(
-        image_size = args.size,
-        patch_size = args.patch,
-        num_classes = 10,
-        dim = int(args.dim),
-        depth = 6,   # depth of transformer for patch to patch attention only
-        cls_depth=2, # depth of cross attention of CLS tokens to patch
-        heads = 8,
-        mlp_dim = 512,
-        dropout = 0.1,
-        emb_dropout = 0.1,
-        layer_dropout = 0.05
-    )
-    elif args.net=="cait_small":
-        from models.cait import CaiT
-        net = CaiT(
-        image_size = args.size,
-        patch_size = args.patch,
-        num_classes = 10,
-        dim = int(args.dim),
-        depth = 6,   # depth of transformer for patch to patch attention only
-        cls_depth=2, # depth of cross attention of CLS tokens to patch
-        heads = 6,
-        mlp_dim = 256,
-        dropout = 0.1,
-        emb_dropout = 0.1,
-        layer_dropout = 0.05
-    )
-    elif args.net=="swin":
-        from models.swin import swin_t
-        net = swin_t(window_size=args.patch,
-                    num_classes=10,
-                    downscaling_factors=(2,2,2,1))
-
-    net = net.to(args.device)
-    if args.compile:
-        net_forward = torch.compile(net.forward)
-    else:
-        net_forward = net.forward
-    
-    return net, net_forward
 
 
 def load_data(args):

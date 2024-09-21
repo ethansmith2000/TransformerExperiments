@@ -24,9 +24,8 @@ import pandas as pds
 import csv
 import time
 
-from utils import progress_bar, load_data, train, test
+from utils import progress_bar, load_data, load_model, train, test
 from randomaug import RandAugment
-from models.vit import ViT
 
 
 default_args = dict(
@@ -42,27 +41,20 @@ default_args = dict(
     size = 32,
     n_epochs = 100,
     patch = 4,
-    # dim = 512,
-    # mlp_dim = 1024,
-    dim = 512,
+    dim = 64,
+    convkernel = 8,
+    num_classes=10,
     mlp_dim = 1024,
     compile=False,
-    depth = 6,
-    attn_heads = 8,
-    dropout = 0.1,
-    emb_dropout = 0.1,
-
-    act = "gelu",
-    post_attn_act = None,
-    hyper_attn = True,
 )
 
 
 def train_model(args):
     def loss_fn(net_fwd, inputs, targets):
-        pred_labels = net_fwd(inputs)
+        pred_labels = net_forward(inputs)
         loss = nn.CrossEntropyLoss()(pred_labels, targets)
         return loss, pred_labels
+
 
     args = SimpleNamespace(**args)
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -70,28 +62,7 @@ def train_model(args):
     args.start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
     trainloader, testloader = load_data(args)
-
-    net = ViT(
-        image_size = args.size,
-        patch_size = args.patch,
-        num_classes = 10,
-        dim = int(args.dim),
-        depth = args.depth,
-        heads = args.attn_heads,
-        mlp_dim = args.mlp_dim,
-        dropout = args.dropout,
-        emb_dropout = args.emb_dropout,
-
-        act=args.act,
-        post_attn_act=args.post_attn_act,
-        hyper_attn=args.hyper_attn
-        )
-
-    net = net.to(args.device)
-    if args.compile:
-        net_forward = torch.compile(net.forward)
-    else:
-        net_forward = net.forward
+    net, net_forward = load_model(args)
 
     print("NUM PARAMS: ", sum([p.numel() for p in net.parameters()]))
 
@@ -115,7 +86,7 @@ def train_model(args):
     if args.wandb:
         import wandb
         watermark = "run"
-        wandb.init(project="cifar-hyperattn", name=watermark)
+        wandb.init(project="cifar10-challange", name=watermark)
         wandb.config.update(args)
 
     if args.wandb:
