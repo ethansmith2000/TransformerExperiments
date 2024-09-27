@@ -67,7 +67,7 @@ class GPT2MLPGeGLU(nn.Module):
 
 
 class GPT2MLPDouble(nn.Module):
-    def __init__(self, config, mlp_mult=4, activation_type='gelu', power=1.0):
+    def __init__(self, config, mlp_mult=4, activation_type='gelu', power=1.0, norm_in_between=False):
         super().__init__()
         embed_dim = config.hidden_size
         intermediate_size = embed_dim * mlp_mult
@@ -77,10 +77,13 @@ class GPT2MLPDouble(nn.Module):
         self.act = Activation(activation_type=activation_type, power=power)
         self.dropout = nn.Dropout(config.resid_pdrop)
 
+        self.norm_in_between = nn.LayerNorm(intermediate_size) if norm_in_between else nn.Identity()
+
     def forward(self, hidden_states: Optional[Tuple[torch.FloatTensor]]) -> torch.FloatTensor:
         hidden_states = self.c_fc(hidden_states)
         hidden_states = self.act(hidden_states)
         hidden_states = self.c_middle(hidden_states)
+        hidden_states = self.norm_in_between(hidden_states)
         hidden_states = self.act(hidden_states)
         hidden_states = self.c_proj(hidden_states)
         hidden_states = self.dropout(hidden_states)
@@ -127,7 +130,7 @@ def get_run_name(args, exp_args):
 
 
 extra_args = {
-    "mode": "base", # base, geglu, double
+    "mode": "double", # base, geglu, double
     "targets": "all", # all, even, odd, first_half, second_half
-    "mlp_mult": 4
+    "mlp_mult": 2
 }
