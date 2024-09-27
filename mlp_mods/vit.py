@@ -28,10 +28,14 @@ class GegluFeedForward(nn.Module):
         self.up = nn.Linear(dim, hidden_dim * 2)
         self.down = nn.Linear(hidden_dim, dim)
         self.act = Activation(act, power=act_power, dim=hidden_dim)
+        self.dropout = nn.Dropout(dropout)
     
     def forward(self, x):
         x, gate = self.up(x).chunk(2, dim=-1)
-        return self.down(x * self.act(gate))
+        gate = self.act(gate)
+        x = self.dropout(x)
+        gate = self.dropout(gate)
+        return self.dropout(self.down(x * gate))
 
 class DoubleFeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout = 0., act="gelu", act_power=1):
@@ -47,10 +51,18 @@ class DoubleFeedForward(nn.Module):
             nn.Dropout(dropout)
         )
 
+    def forward(self, x):
+        return self.net(x)
+
 def patch_model(model, args):
     for name, module in model.named_modules():
         if hasattr(module, 'ff'):
-            module.ff = AltActFeedForward(args.dim, args.mlp_dim, args.dropout, args.act, args.act_power)
+            if args.mode == "geglu":
+                del module.ff
+                module.add_module('ff', GegluFeedForward(module.dim, module.hidden_dim, args.dropout, args.activation, args.act_power))
+            elif args.mode == "double":
+                del module.ff
+                module.add_module('ff', DoubleFeedForward(module.dim, module.hidden_dim, args.dropout, args.activation, args.act_power))
 
     # init weights again
     model.init_weights()

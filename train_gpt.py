@@ -63,6 +63,9 @@ import time
 import pynvml
 import psutil
 
+import importlib
+#
+
 
 def profile_gpus():
     # print("*"*100)
@@ -80,17 +83,10 @@ def profile_cpu():
     return memory_info
 
 
-
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-# check_min_version("4.39.0.dev0")
-
 logger = get_logger(__name__)
-
-# require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
 MODEL_CONFIG_CLASSES = list(MODEL_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
 
 
 def main():
@@ -131,38 +127,29 @@ def main():
         "max_grad_norm": 1.0,
         "hf_path": None,
         "base_output_dir": None,
+        "compile": False,
     }
 
+    experiment_args = dict(
+        experiment="mlp_mods"
+    )
 
-    if args["use_new_attn"]:
-        base_str = f"new_attn"#_{args['offset']}"
-        if args["neg_version"]:
-            base_str += "_neg"
-        if args["include_o"]:
-            base_str += "_o"
-        if args["alternate"]:
-            base_str += "_alt"
+    #
+    exp_module = importlib.import_module(f"{experiment_args['experiment']}.gpt")
 
-        args["output_dir"] = f"{args['base_output_dir']}/{base_str}"
-    else:
-        base_str = "base"
-        args["output_dir"] = f"{args['base_output_dir']}/base"
-
-
-    unique_activations = list(set(args['activations']))
-    non_gelu = [a for a in unique_activations if a != "gelu"]
-    if len(non_gelu) > 0:
-        non_gelu = non_gelu[0]
-        indices = tuple([i+1 for i, a in enumerate(args['activations']) if a == non_gelu])
-        base_str = base_str + "_{}-{}".format(non_gelu, indices)
+    # defaults
+    extra_args = exp_module.extra_args
+    for k, v in extra_args.items():
+        if k not in experiment_args:
+            experiment_args[k] = v
+    
+    args, run_name = exp_module.get_run_name(args, experiment_args)
 
     args = SimpleNamespace(**args)
 
     print("Running with the following arguments:")
     print(json.dumps(vars(args), indent=2))
 
-    # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
-    send_example_telemetry("run_clm_no_trainer", args)
     accelerator_log_kwargs = {}
 
     if args.output_dir is None:
@@ -183,12 +170,8 @@ def main():
         level=logging.INFO,
     )
     logger.info(accelerator.state, main_process_only=False)
-    if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
+    datasets.utils.logging.set_verbosity_warning()
+    transformers.utils.logging.set_verbosity_info()
 
     # If passed along, set the training seed now.
     if args.seed is not None:
@@ -281,12 +264,7 @@ def main():
     model.gradient_checkpointing_enable()
 
     #######################################
-    if args.use_new_attn:
-        patch_attn(model, offset=args.offset, include_o=args.include_o, neg_version=args.neg_version, inner_offset=args.inner_offset, alternate=args.alternate)
-    
-    if len(args.activations) > 0:
-        patch_mlp(model, args.activations)
-    
+    exp_module.patch_model(model, experiment_args)
     #######################################
 
     print(model)
@@ -440,10 +418,10 @@ def main():
         init_kwargs = {
             "wandb":
                 {
-                    "name": f"{base_str}",
+                    "name": f"{run_name}",
                 }
         }
-        accelerator.init_trackers("clm_no_trainer", experiment_config, init_kwargs=init_kwargs)
+        accelerator.init_trackers(experiment_args["experiment"], experiment_config, init_kwargs=init_kwargs)
 
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -492,6 +470,8 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(completed_steps)
 
+    forward = torch.compile(model) if args.compile else model
+
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         if args.with_tracking:
@@ -504,7 +484,7 @@ def main():
         for step, batch in enumerate(active_dataloader):
             model.train()
             with accelerator.accumulate(model):
-                outputs = model(**batch)
+                outputs = forward(**batch)
                 loss = outputs.loss
                 # We keep track of the loss at each epoch
                 if args.with_tracking:
@@ -551,7 +531,7 @@ def main():
                 losses = []
                 for step, batch in enumerate(eval_dataloader):
                     with torch.no_grad():
-                        outputs = model(**batch)
+                        outputs = forward(**batch)
 
                     loss = outputs.loss
                     losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_train_batch_size)))

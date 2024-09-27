@@ -50,6 +50,23 @@ class LinearAct(nn.Module):
         return self.post_act(self.linear(self.pre_act(x)))
 
 
+from torch.autograd import Function
+
+class ReluForwardSiluBackward(Function):
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        return input.clamp(min=0)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input = ctx.saved_tensors[0]
+        sigmoid = torch.sigmoid(input)
+        grad_input = grad_output * (sigmoid * (1 + input * (1 - sigmoid)))
+        return grad_input
+
+relu_fwd_silu_bwd = ReluForwardSiluBackward.apply
+
 class Activation(nn.Module):
 
     def __init__(self, activation_type: str = 'relu', power=1.0, dim=None):
@@ -77,6 +94,8 @@ class Activation(nn.Module):
             activation = SignGelu2(neg_scale=20.0)
         elif activation_type == 'sinlu':
             activation = SinLU(dim=dim)
+        elif activation_type == 'relu_fwd_silu_bwd':
+            activation = relu_fwd_silu_bwd
 
         if power != 1.0:
             self.activation = lambda x: torch.pow(activation(x), power)
