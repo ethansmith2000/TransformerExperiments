@@ -206,7 +206,7 @@ def patch_model(model, exp_args):
 
             if meets_criteria:
                 m.mlp = GPT2MLPMultipleResidual(
-                    embed_dim = model.config.hidden_size
+                    embed_dim = model.config.hidden_size,
                     mults = exp_args["mults"],
                     interior_norms = exp_args["interior_norms"],
                     exterior_norms = exp_args["exterior_norms"],
@@ -219,16 +219,87 @@ def patch_model(model, exp_args):
 
 
 def get_run_name(args, exp_args):
-    run_name = "mult_" + str(exp_args["mults"]) + "_in_" + str(exp_args["interior_norms"]) + "_en_" + str(exp_args["exterior_norms"]) + "_m_" + str(args["mode"]) + "_t_" + str(args["targets"]) + "_lr:" + str(args["learning_rate"])
+    run_name = "mult_" + str(exp_args["mults"]) + "_in_" + str(exp_args["interior_norms"]) + "_en_" + str(exp_args["exterior_norms"]) + "_m_" + str(exp_args["mode"]) + "_t_" + str(exp_args["targets"]) + "_lr:" + str(args["learning_rate"])
     args["output_dir"] = f"{args['base_output_dir']}/{run_name}"
 
     return args, run_name
 
 
 extra_args = {
-    "mults": [[2,2]],
-    "interior_norms": [[False,False]],
+    "mults": [[4]],
+    "interior_norms": [[False]],
     "exterior_norms": [True],
     "mode": ["base"],
     "targets": "all", # all, even, odd, first_half, second_half
+
+
+    # "mults": [[4]],
+    # "interior_norms": [[False]],
+    # "exterior_norms": [True],
+    # "mode": ["geglu"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+
+    # "mults": [[2,2]],
+    # "interior_norms": [[False, False]],
+    # "exterior_norms": [True],
+    # "mode": ["base"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+    # "mults": [[2,2]],
+    # "interior_norms": [[False, True]],
+    # "exterior_norms": [True],
+    # "mode": ["base"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+    # "mults": [[1,1,1,1]],
+    # "interior_norms": [[False, False, False, False]],
+    # "exterior_norms": [True],
+    # "mode": ["base"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+    # "mults": [[1,1,1,1]],
+    # "interior_norms": [[False, True, False, True]],
+    # "exterior_norms": [True],
+    # "mode": ["base"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+
+    # "mults": [[1,1,1,1]],
+    # "interior_norms": [[False, False, False, False]],
+    # "exterior_norms": [True],
+    # "mode": ["geglu"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+    # "mults": [[1,1,1,1]],
+    # "interior_norms": [[False, True, False, True]],
+    # "exterior_norms": [True],
+    # "mode": ["geglu"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+
+    # "mults": [[1,1,1,1]],
+    # "interior_norms": [[False, False, False, False]],
+    # "exterior_norms": [True],
+    # "mode": ["geglu"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+    # "mults": [[1,1,1,1]],
+    # "interior_norms": [[False, True, False, True]],
+    # "exterior_norms": [True],
+    # "mode": ["geglu"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+    # "mults": [[2],[2],[2]],
+    # "interior_norms": [[False],[False],[False]],
+    # "exterior_norms": [True, True, True],
+    # "mode": ["base", "base", "base"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
+    # "mults": [[1],[1],[1]],
+    # "interior_norms": [[False],[False],[False]],
+    # "exterior_norms": [True, True, True],
+    # "mode": ["base", "base", "base"],
+    # "targets": "all", # all, even, odd, first_half, second_half
+
 }
