@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from typing import Optional, Tuple
 from common.activations import Activation
+from types import MethodType
 
 
 class Conv1D(nn.Module):
@@ -29,65 +30,160 @@ class Conv1D(nn.Module):
         return x
 
 
-class GPT2MLP(nn.Module):
-    def __init__(self, config, mlp_mult=4, activation_type='gelu', power=1.0):
+class GeGLU(nn.Module):
+    def __init__(self, in_dim=1024, out_dim=1024, activation_type='gelu', power=1.0, norm=False):
         super().__init__()
-        embed_dim = config.hidden_size
-        intermediate_size = embed_dim * mlp_mult
-        self.c_fc = Conv1D(intermediate_size, embed_dim)
-        self.c_proj = Conv1D(embed_dim, intermediate_size)
-        self.act = Activation(activation_type=activation_type, power=power)
-        self.dropout = nn.Dropout(config.resid_pdrop)
+        self.fc = Conv1D(out_dim * 2, in_dim)
+        self.act =  Activation(activation_type=activation_type, power=power)
+        self.norm = torch.nn.LayerNorm(out_dim) if norm else torch.nn.Identity()
 
     def forward(self, hidden_states: Optional[Tuple[torch.FloatTensor]]) -> torch.FloatTensor:
-        hidden_states = self.c_fc(hidden_states)
-        hidden_states = self.act(hidden_states)
-        hidden_states = self.c_proj(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        return hidden_states
-
-
-class GPT2MLPGeGLU(nn.Module):
-    def __init__(self, config, mlp_mult=4, activation_type='gelu', power=1.0):
-        super().__init__()
-        embed_dim = config.hidden_size
-        intermediate_size = embed_dim * mlp_mult
-        self.c_fc = Conv1D(intermediate_size * 2, embed_dim)
-        self.c_proj = Conv1D(embed_dim, intermediate_size)
-        self.act = Activation(activation_type=activation_type, power=power)
-        self.dropout = nn.Dropout(config.resid_pdrop)
-
-    def forward(self, hidden_states: Optional[Tuple[torch.FloatTensor]]) -> torch.FloatTensor:
-        hidden_states, gate = self.c_fc(hidden_states).chunk(2, dim=-1)
+        hidden_states, gate = self.norm(self.fc(hidden_states)).chunk(2, dim=-1)
         hidden_states = self.act(gate) * hidden_states
-        hidden_states = self.c_proj(hidden_states)
-        hidden_states = self.dropout(hidden_states)
         return hidden_states
 
 
-
-class GPT2MLPDouble(nn.Module):
-    def __init__(self, config, mlp_mult=4, activation_type='gelu', power=1.0, norm_in_between=False):
+class LinearAct(nn.Module):
+    def __init__(self, in_dim=1024, out_dim=1024, activation_type='gelu', power=1.0, norm=False):
         super().__init__()
-        embed_dim = config.hidden_size
-        intermediate_size = embed_dim * mlp_mult
-        self.c_fc = Conv1D(intermediate_size, embed_dim)
-        self.c_middle = Conv1D(intermediate_size, intermediate_size)
-        self.c_proj = Conv1D(embed_dim, intermediate_size)
-        self.act = Activation(activation_type=activation_type, power=power)
-        self.dropout = nn.Dropout(config.resid_pdrop)
+        self.fc = Conv1D(out_dim, in_dim)
+        self.act =  Activation(activation_type=activation_type, power=power)
+        self.norm = torch.nn.LayerNorm(out_dim) if norm else torch.nn.Identity()
+    
+    def forward(self, hidden_states: Optional[Tuple[torch.FloatTensor]]) -> torch.FloatTensor:
+        hidden_states = self.act(self.norm(self.fc(hidden_states)))
+        return hidden_states
 
-        self.norm_in_between = nn.LayerNorm(intermediate_size) if norm_in_between else nn.Identity()
+
+class GPT2MLP(nn.Module):
+    """
+    MLP layer but allows for varying number of layers and hidden dimensions and inbetween norms if we want
+    """
+    def __init__(self, 
+                embed_dim, 
+                mults=[2,2], 
+                norms=[False,False],
+                mode = "base", # geglu
+                activation_type='gelu', 
+                power=1.0
+                ):
+        super().__init__()
+        net = []
+        cur_dim = embed_dim
+
+        assert len(mults) == len(norms)
+
+        for i in range(len(mults)):
+            in_dim = embed_dim if i == 0 else cur_dim
+            cur_dim = embed_dim * mults[i]
+            if mode == "geglu":
+                net.append(GeGLU(in_dim, cur_dim, activation_type, power, norms[i]))
+            else:
+                net.append(LinearAct(in_dim, cur_dim, activation_type, power, norms[i]))
+        net.append(Conv1D(embed_dim, cur_dim))
+        self.net = nn.Sequential(*net)
+
 
     def forward(self, hidden_states: Optional[Tuple[torch.FloatTensor]]) -> torch.FloatTensor:
-        hidden_states = self.c_fc(hidden_states)
-        hidden_states = self.act(hidden_states)
-        hidden_states = self.c_middle(hidden_states)
-        hidden_states = self.norm_in_between(hidden_states)
-        hidden_states = self.act(hidden_states)
-        hidden_states = self.c_proj(hidden_states)
-        hidden_states = self.dropout(hidden_states)
+        return self.net(hidden_states)
+
+
+
+class GPT2MLPMultipleResidual(nn.Module):
+
+    """
+    multiple back to back MLPs with residual connections between each
+    """
+
+    def __init__(self, 
+                embed_dim, 
+                mults=[[2,2], [1]], 
+                interior_norms=[[False,False],[False]],
+                exterior_norms=[True, True],
+                mode = ["base", "geglu"], # geglu
+                activation_type='gelu', 
+                power=1.0
+                ):
+        super().__init__()
+        self.sub_mlps = nn.ModuleList()
+        self.norms = nn.ModuleList([
+            nn.LayerNorm(embed_dim) if norm else nn.Identity() for norm in exterior_norms
+        ])
+        for i in range(len(mults)):
+            self.sub_mlps.append(GPT2MLP(embed_dim, mults[i], interior_norms[i], mode[i], activation_type, power))
+
+    def forward(self, hidden_states) -> torch.FloatTensor:
+        for mlp, norm in zip(self.sub_mlps, self.norms):
+            hidden_states = hidden_states + mlp(norm(hidden_states))
         return hidden_states
+
+    
+
+
+def forward(
+    self,
+    hidden_states: Optional[Tuple[torch.FloatTensor]],
+    layer_past: Optional[Tuple[torch.Tensor]] = None,
+    attention_mask: Optional[torch.FloatTensor] = None,
+    head_mask: Optional[torch.FloatTensor] = None,
+    encoder_hidden_states: Optional[torch.Tensor] = None,
+    encoder_attention_mask: Optional[torch.FloatTensor] = None,
+    use_cache: Optional[bool] = False,
+    output_attentions: Optional[bool] = False,
+):
+    residual = hidden_states
+    hidden_states = self.ln_1(hidden_states)
+    attn_outputs = self.attn(
+        hidden_states,
+        layer_past=layer_past,
+        attention_mask=attention_mask,
+        head_mask=head_mask,
+        use_cache=use_cache,
+        output_attentions=output_attentions,
+    )
+    attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
+    outputs = attn_outputs[1:]
+    # residual connection
+    hidden_states = attn_output + residual
+
+    if encoder_hidden_states is not None:
+        # add one self-attention block for cross-attention
+        if not hasattr(self, "crossattention"):
+            raise ValueError(
+                f"If `encoder_hidden_states` are passed, {self} has to be instantiated with "
+                "cross-attention layers by setting `config.add_cross_attention=True`"
+            )
+        residual = hidden_states
+        hidden_states = self.ln_cross_attn(hidden_states)
+        cross_attn_outputs = self.crossattention(
+            hidden_states,
+            attention_mask=attention_mask,
+            head_mask=head_mask,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
+            output_attentions=output_attentions,
+        )
+        attn_output = cross_attn_outputs[0]
+        # residual connection
+        hidden_states = residual + attn_output
+        outputs = outputs + cross_attn_outputs[2:]  # add cross attentions if we output attention weights
+
+    # residual = hidden_states
+    # hidden_states = self.ln_2(hidden_states)
+    # feed_forward_hidden_states = self.mlp(hidden_states)
+    # # residual connection
+    # hidden_states = residual + feed_forward_hidden_states
+
+    ####
+    hidden_states = self.mlp(hidden_states)
+    ####
+
+    if use_cache:
+        outputs = (hidden_states,) + outputs
+    else:
+        outputs = (hidden_states,) + outputs[1:]
+
+    return outputs  # hidden_states, present, (attentions, cross_attentions)
 
 
 
@@ -109,28 +205,30 @@ def patch_model(model, exp_args):
                 meets_criteria = idx >= len(model.transformer.h) // 2
 
             if meets_criteria:
-                if exp_args["mode"] == "geglu":
-                    m.mlp = GPT2MLPGeGLU(model.config, mlp_mult=exp_args["mlp_mult"])
-                elif exp_args["mode"] == "double":
-                    m.mlp = GPT2MLPDouble(model.config, mlp_mult=exp_args["mlp_mult"])
-                elif exp_args["mode"] == "base":
-                    m.mlp = GPT2MLP(model.config, mlp_mult=exp_args["mlp_mult"])
-                else:
-                    raise ValueError("Invalid mode")
+                m.mlp = GPT2MLPMultipleResidual(
+                    embed_dim = model.config.hidden_size
+                    mults = exp_args["mults"],
+                    interior_norms = exp_args["interior_norms"],
+                    exterior_norms = exp_args["exterior_norms"],
+                    mode = exp_args["mode"]
+                )
+                m.forward = MethodType(forward, m)
 
             idx += 1
             
 
 
 def get_run_name(args, exp_args):
-    run_name = str(exp_args["mode"]) + "_" + str(exp_args["targets"]) + "_mm:" + str(exp_args["mlp_mult"]) + "_lr:" + str(args["learning_rate"])
+    run_name = "mult_" + str(exp_args["mults"]) + "_in_" + str(exp_args["interior_norms"]) + "_en_" + str(exp_args["exterior_norms"]) + "_m_" + str(args["mode"]) + "_t_" + str(args["targets"]) + "_lr:" + str(args["learning_rate"])
     args["output_dir"] = f"{args['base_output_dir']}/{run_name}"
 
     return args, run_name
 
 
 extra_args = {
-    "mode": "double", # base, geglu, double
+    "mults": [[2,2]],
+    "interior_norms": [[False,False]],
+    "exterior_norms": [True],
+    "mode": ["base"],
     "targets": "all", # all, even, odd, first_half, second_half
-    "mlp_mult": 2
 }

@@ -113,7 +113,6 @@ def main():
         "lr_scheduler_type": "linear",
         "num_warmup_steps": 250,
         "seed": 123,
-        "model_type": None,
         "block_size": None,
         "preprocessing_num_workers": 10,
         "overwrite_cache": False,
@@ -128,6 +127,7 @@ def main():
         "hf_path": None,
         "base_output_dir": None,
         "compile": False,
+        "dropout": 0.0,
     }
 
     experiment_args = dict(
@@ -170,8 +170,12 @@ def main():
         level=logging.INFO,
     )
     logger.info(accelerator.state, main_process_only=False)
-    datasets.utils.logging.set_verbosity_warning()
-    transformers.utils.logging.set_verbosity_info()
+    if accelerator.is_local_main_process:
+        datasets.utils.logging.set_verbosity_warning()
+        transformers.utils.logging.set_verbosity_info()
+    else:
+        datasets.utils.logging.set_verbosity_error()
+        transformers.utils.logging.set_verbosity_error()
 
     # If passed along, set the training seed now.
     if args.seed is not None:
@@ -249,6 +253,11 @@ def main():
         args.model_name_or_path,
         trust_remote_code=args.trust_remote_code,
     )
+
+    for kwarg in vars(config).keys():
+        if "drop" in kwarg:
+            setattr(config, kwarg, args.dropout)
+
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name_or_path, use_fast=not args.use_slow_tokenizer, trust_remote_code=args.trust_remote_code
     )
@@ -268,7 +277,6 @@ def main():
     #######################################
 
     print(model)
-
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -413,6 +421,7 @@ def main():
     # The trackers initializes automatically on the main process.
     if args.with_tracking:
         experiment_config = vars(args)
+        experiment_config.update(experiment_args)
         # TensorBoard cannot log Enums, need the raw value
         experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"]
         init_kwargs = {
@@ -421,7 +430,7 @@ def main():
                     "name": f"{run_name}",
                 }
         }
-        accelerator.init_trackers(experiment_args["experiment"], experiment_config, init_kwargs=init_kwargs)
+        accelerator.init_trackers(experiment_args["experiment"]+"_gpt", experiment_config, init_kwargs=init_kwargs)
 
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -499,10 +508,7 @@ def main():
                     grad_norm = accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                     mini_logs["grad_norm"] = grad_norm
                 
-                accelerator.log(
-                        mini_logs,
-                        step=completed_steps,
-                    )
+                accelerator.log(mini_logs, step=completed_steps)
 
                 if step % 10 == 0:
                     profile_gpus()

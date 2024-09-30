@@ -52,8 +52,8 @@ class Block(nn.Module):
         self.ff = FeedForward(dim, mlp_dim, dropout)
 
     def forward(self, x):
-        x = self.attn(x) + x
-        x = self.ff(x) + x
+        x = self.attn(self.attn_norm(x)) + x
+        x = self.ff(self.ff_norm(x)) + x
         return x
 
 class Transformer(nn.Module):
@@ -74,7 +74,7 @@ class ViT(nn.Module):
                     mlp_dim=512,
                     image_size=32,
                     patch_size=4,
-                    num_classes=3,
+                    num_classes=10,
                     channels = 3, 
                     dim_head = 64, 
                     dropout = 0., 
@@ -83,6 +83,7 @@ class ViT(nn.Module):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
+        mlp_dim = dim * 4
 
         assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
 

@@ -58,14 +58,11 @@ from transformers.utils.versions import require_version
 
 from patch import NewT5Attention, patch_attn
 from types import SimpleNamespace
-
-
 import torch
 import torch.nn as nn
 import math
 from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
-
-
+import importlib
 
 logger = get_logger(__name__)
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/translation/requirements.txt")
@@ -133,18 +130,37 @@ base_args = dict(
     encoder_patch=True,
     decoder_self_patch=False,
     decoder_cross_patch=False,
+
+    source_prefix=f"translate English to Español: "
 )
 
-base_args["source_prefix"] = f"translate English to Español: "
+experiment_args = dict(
+    experiment="mlp_mods"
+)
 
 
 def main():
     # Parse the arguments
     args = SimpleNamespace(**base_args)
-    send_example_telemetry("run_translation_no_trainer", args)
     accelerator = (
         Accelerator(log_with=args.report_to, project_dir=args.output_dir, mixed_precision=args.mixed_precision) if args.with_tracking else Accelerator() 
     )
+
+    #
+    exp_module = importlib.import_module(f"{experiment_args['experiment']}.t5")
+
+    # defaults
+    extra_args = exp_module.extra_args
+    for k, v in extra_args.items():
+        if k not in experiment_args:
+            experiment_args[k] = v
+    
+    args, run_name = exp_module.get_run_name(args, experiment_args)
+
+    args = SimpleNamespace(**args)
+
+    print("Running with the following arguments:")
+    print(json.dumps(vars(args), indent=2))
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -201,14 +217,19 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name_or_path, use_fast=not args.use_slow_tokenizer, trust_remote_code=args.trust_remote_code
     )
+    for kwarg in vars(config).keys():
+        if "drop" in kwarg:
+            setattr(config, kwarg, args.dropout)
     model = AutoModelForSeq2SeqLM.from_config(config, trust_remote_code=args.trust_remote_code)
 
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
 
+    #######################################
+    exp_module.patch_model(model, experiment_args)
+    #######################################
+
     ############
-    if args.dipole_attn:
-        patch_attn(model, args.sigmoid_weight, args.decoupled)
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -378,7 +399,8 @@ def main():
                 if args.decoupled:
                     name = f"{name}_decoupled"
             tracker_args = {"wandb": {"name": name}}
-            accelerator.init_trackers("translation_no_trainer", experiment_config,init_kwargs=tracker_args)
+            accelerator.init_trackers(experiment_args["experiment"] + "_t5", 
+                            experiment_config,init_kwargs=tracker_args)
 
     metric = evaluate.load("sacrebleu")
 
@@ -537,22 +559,6 @@ def main():
                 step=completed_steps,
             )
 
-        if args.push_to_hub and epoch < args.num_train_epochs - 1:
-            accelerator.wait_for_everyone()
-            unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(
-                args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-            )
-            if accelerator.is_main_process:
-                tokenizer.save_pretrained(args.output_dir)
-                api.upload_folder(
-                    commit_message=f"Training in progress epoch {epoch}",
-                    folder_path=args.output_dir,
-                    repo_id=repo_id,
-                    repo_type="model",
-                    token=args.hub_token,
-                )
-
         if args.checkpointing_steps == "epoch":
             output_dir = f"epoch_{epoch}"
             if args.output_dir is not None:
@@ -570,14 +576,6 @@ def main():
         )
         if accelerator.is_main_process:
             tokenizer.save_pretrained(args.output_dir)
-            if args.push_to_hub:
-                api.upload_folder(
-                    commit_message="End of training",
-                    folder_path=args.output_dir,
-                    repo_id=repo_id,
-                    repo_type="model",
-                    token=args.hub_token,
-                )
         with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
             json.dump({"eval_bleu": eval_metric["score"]}, f)
 

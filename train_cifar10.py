@@ -23,7 +23,7 @@ from types import SimpleNamespace
 import pandas as pds
 import csv
 import time
-
+import importlib
 from common.cifar_utils import progress_bar, load_data, train, test
 from common.vit import ViT
 from common.randomaug import RandAugment
@@ -42,15 +42,30 @@ default_args = dict(
     size = 32,
     n_epochs = 100,
     patch = 4,
-    dim = 64,
-    convkernel = 8,
+    dim = 512,
+    depth=6,
     num_classes=10,
-    mlp_dim = 1024,
-    compile=False,
+    compile=True,
+    dropout=0.1,
+    emb_dropout=0.1,
+)
+
+experiment_args = dict(
+    experiment="mlp_mods",
+    
 )
 
 
-def train_model(args):
+def train_model(args, exp_args):
+    exp_module = importlib.import_module(f"{exp_args['experiment']}.vit")
+
+    # defaults
+    extra_args = exp_module.extra_args
+    for k, v in extra_args.items():
+        if k not in exp_args:
+            exp_args[k] = v
+
+    args, run_name = exp_module.get_run_name(args, exp_args)
     
     def loss_fn(net_fwd, inputs, targets):
         pred_labels = net_forward(inputs)
@@ -64,11 +79,17 @@ def train_model(args):
 
     trainloader, testloader = load_data(args)
 
-    net = ViT()
-    if args.compile:
-        net_forward = torch.compile(net.forward)
-    else:
-        net_forward = net.forward
+    net = ViT(
+        dim=args.dim,
+        depth=args.depth,
+        dropout=args.dropout,
+        emb_dropout=args.emb_dropout,
+    )
+
+    exp_module.patch_model(net, exp_args)
+    net = net.to(args.device)
+
+    net_forward = torch.compile(net.forward) if args.compile else net.forward
 
     print("NUM PARAMS: ", sum([p.numel() for p in net.parameters()]))
 
@@ -91,9 +112,10 @@ def train_model(args):
 
     if args.wandb:
         import wandb
-        watermark = "run"
-        wandb.init(project="cifar10-challange", name=watermark)
+        wandb.init(project=exp_args['experiment']+"_vit",
+                name=run_name)
         wandb.config.update(args)
+        wandb.config.update(exp_args)
 
     if args.wandb:
         wandb.watch(net)
@@ -127,5 +149,5 @@ def train_model(args):
 
 if __name__ == '__main__':
     args = default_args
-    train_model(args)
+    train_model(args, experiment_args)
     

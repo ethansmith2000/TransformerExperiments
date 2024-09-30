@@ -15,7 +15,7 @@ import torch.nn.init as init
 import torch
 import torchvision
 import torchvision.transforms as transforms
-from randomaug import RandAugment
+from .randomaug import RandAugment
 
 def get_mean_and_std(dataset):
     '''Compute the mean and std value of dataset.'''
