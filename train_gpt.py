@@ -94,18 +94,15 @@ def main():
     args = {
         "num_validation_batches": 25,
         "validate_every": 1000,
-        # "dataset_name": "wikitext",
-        # "dataset_config_name": "wikitext-103-v1",
-        "dataset_name": "gair-prox/FineWeb-pro",
-        "dataset_config_name": "default",
+        "dataset_name": "wikitext",
+        "dataset_config_name": "wikitext-103-v1",
+        # "dataset_name": "gair-prox/FineWeb-pro",
+        # "dataset_config_name": "default",
         "train_file": None,
         "validation_file": None,
         "validation_split_percentage": 5,
         # "model_name_or_path": "openai-community/gpt2-medium",
         "model_name_or_path": "openai-community/gpt2",
-        "config_name": None,
-        "tokenizer_name": None,
-        "use_slow_tokenizer": False,
         "per_device_train_batch_size": 28,
         "learning_rate": 5.0e-5,
         "weight_decay": 0.01,
@@ -119,21 +116,20 @@ def main():
         "preprocessing_num_workers": 10,
         "overwrite_cache": False,
         "no_keep_linebreaks": False,
-        "trust_remote_code": False,
         "checkpointing_steps": None,
         "resume_from_checkpoint": None,
         "with_tracking": True,
         "report_to": "wandb",
-        "low_cpu_mem_usage": False,
         "max_grad_norm": 1.0,
         "hf_path": None,
         "base_output_dir": None,
-        "compile": False,
+        "compile": True,
         "dropout": 0.0,
+        "mixed_precision": "fp16",
     }
 
     experiment_args = dict(
-        experiment="mlp_mods"
+        experiment="boneless_attn"
     )
 
     #
@@ -162,7 +158,7 @@ def main():
         accelerator_log_kwargs["project_dir"] = args.output_dir
 
     accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps, 
-                                                            mixed_precision="fp16",
+                                                            mixed_precision=args.mixed_precision,
                                                             **accelerator_log_kwargs)
 
     # Make one log on every process with the configuration for debugging.
@@ -253,7 +249,6 @@ def main():
     # download model & vocab.
     config = AutoConfig.from_pretrained(
         args.model_name_or_path,
-        trust_remote_code=args.trust_remote_code,
     )
 
     for kwarg in vars(config).keys():
@@ -261,15 +256,13 @@ def main():
             setattr(config, kwarg, args.dropout)
 
     tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name_or_path, use_fast=not args.use_slow_tokenizer, trust_remote_code=args.trust_remote_code
+        args.model_name_or_path, use_fast=True,
     )
     model = AutoModelForCausalLM.from_config(
         config,
         # args.model_name_or_path,
         # from_tf=bool(".ckpt" in args.model_name_or_path),
         # config=config,
-        # low_cpu_mem_usage=args.low_cpu_mem_usage,
-        trust_remote_code=args.trust_remote_code,
     )
 
     model.gradient_checkpointing_enable()
@@ -404,8 +397,8 @@ def main():
     )
 
     # On TPU, the tie weights in our model have been disconnected, so we need to restore the ties.
-    if accelerator.distributed_type == DistributedType.TPU:
-        model.tie_weights()
+    # if accelerator.distributed_type == DistributedType.TPU:
+    #     model.tie_weights()
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -481,7 +474,7 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(completed_steps)
 
-    forward = torch.compile(model) if args.compile else model
+    forward = torch.compile(model) if args.compile else model.forward
 
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
