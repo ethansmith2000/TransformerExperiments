@@ -200,11 +200,11 @@ extra_args = {
     # "mod_o": [True, False],
 
     # baseline
-    # "mode": "base",
-    # "mod_q": False,
-    # "mod_k": False,
-    # "mod_v": False,
-    # "mod_o": False,
+    "mode": "base",
+    "mod_q": False,
+    "mod_k": False,
+    "mod_v": False,
+    "mod_o": False,
 
     # correlation, no v/o
     # "mode": "correlation",
@@ -235,11 +235,11 @@ extra_args = {
     # "mod_o": True,
 
     # residual no v/o
-    "mode": "residual",
-    "mod_q": True,
-    "mod_k": True,
-    "mod_v": False,
-    "mod_o": False,
+    # "mode": "residual",
+    # "mod_q": True,
+    # "mod_k": True,
+    # "mod_v": False,
+    # "mod_o": False,
     # "trainable_scale": True,
     
     # residual

@@ -90,7 +90,6 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 
 def main():
-
     args = {
         "num_validation_batches": 25,
         "validate_every": 1000,
@@ -129,16 +128,20 @@ def main():
         "compile": True,
         "compile_optimizer": False,
         "dropout": 0.0,
-        "mixed_precision": "fp16",
+        "mixed_precision": "bf16",
     }
 
+    experiment_args = dict(
+        experiment="boneless_attn"
+    )
+
     # experiment_args = dict(
-    #     experiment="boneless_attn"
+    #     experiment="relative_optimizers"
     # )
 
-    experiment_args = dict(
-        experiment="relative_optimizers"
-    )
+    # experiment_args = dict(
+    #     experiment="calibrated_attention"
+    # )
 
     #
     exp_module = importlib.import_module(f"{experiment_args['experiment']}.gpt")
@@ -482,6 +485,7 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(completed_steps)
 
+
     forward = torch.compile(model) if args.compile else model.forward
 
     def opt_step():
@@ -529,6 +533,8 @@ def main():
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 completed_steps += 1
+                # write loss, lr, and grad norm to the progress bar
+                progress_bar.set_postfix(loss=loss.item(), lr=lr_scheduler.get_last_lr()[0], grad_norm=grad_norm.item())
 
             if isinstance(checkpointing_steps, int):
                 if completed_steps % checkpointing_steps == 0:
