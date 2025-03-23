@@ -95,7 +95,7 @@ class ResidualAttention(BaselineAttention):
                 nn.Dropout(dropout)
             )
 
-def patch_model(model, optimizer, args, exp_args):
+def patch_model(model, args, exp_args):
     for name, m in model.named_modules():
         if hasattr(m, "attn"):
             if exp_args["mode"] == "correlation":
@@ -111,4 +111,4 @@ def patch_model(model, optimizer, args, exp_args):
             else:
                 raise ValueError(f"Invalid mode: {exp_args['mode']}")
                 
-    return model, optimizer
+    return model

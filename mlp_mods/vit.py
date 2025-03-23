@@ -156,7 +156,7 @@ class DoubleFeedForward(nn.Module):
 
 
 
-def patch_model(model, optimizer, args, exp_args):
+def patch_model(model, args, exp_args):
     for name, module in model.named_modules():
         if hasattr(module, 'ff'):
             if exp_args['mode'] == "geglu":
@@ -178,7 +178,7 @@ def patch_model(model, optimizer, args, exp_args):
     # init weights again
     model.init_weights()
 
-    return model, optimizer
+    return model
 
 
 # def get_run_name(args, exp_args):

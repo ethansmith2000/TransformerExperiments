@@ -48,7 +48,7 @@ class AltActAttention(nn.Module):
         return self.to_out(out)
 
 
-def patch_model(model, optimizer, args, exp_args):
+def patch_model(model, args, exp_args):
     for name, module in model.named_modules():
         if hasattr(module, 'attn'):
             module.attn = AltActAttention(args.dim, args.heads, args.dim_head, args.dropout, args.val_act, args.post_attn_act, args.act_power)
@@ -58,4 +58,4 @@ def patch_model(model, optimizer, args, exp_args):
     # init weights again
     model.init_weights()
 
-    return model, optimizer
+    return model

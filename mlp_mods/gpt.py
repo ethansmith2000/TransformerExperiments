@@ -187,7 +187,7 @@ def forward(
 
 
 
-def patch_model(model, optimizer, args, exp_args):
+def patch_model(model, args, exp_args):
     idx = 0
     for n,m in model.named_modules():
         if hasattr(m, "mlp"):
@@ -215,7 +215,7 @@ def patch_model(model, optimizer, args, exp_args):
                 m.forward = MethodType(forward, m)
 
             idx += 1
-    return model, optimizer        
+    return model        
 
 
 def get_run_name(args, exp_args):

@@ -4,7 +4,7 @@ from .relative_adam_2 import RelativeAdam2
 
 
 
-def patch_model(model, optimizer, args, exp_args):
+def patch_optimizer(model, optimizer, args, exp_args):
     no_decay = ["bias", "layer_norm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -25,7 +25,7 @@ def patch_model(model, optimizer, args, exp_args):
     else:
         raise ValueError(f"Invalid optimizer: {exp_args['mode']}")
 
-    return model, optimizer
+    return optimizer
 
 
 def get_run_name(args, exp_args):

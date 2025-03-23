@@ -11,7 +11,7 @@ from .attentions import (
     AttentionSoftmaxPlusOne,
     AttentionSoftmaxPlusFN
 )
-def patch_model(model, optimizer, args, exp_args):
+def patch_model(model, args, exp_args):
     for n,m in model.named_modules():
         if hasattr(m, "attn"):
             dim = model.config.n_embd
@@ -36,7 +36,7 @@ def patch_model(model, optimizer, args, exp_args):
             else:
                 raise ValueError(f"Invalid mode: {exp_args['mode']}")
 
-    return model, optimizer
+    return model
             
 
 
