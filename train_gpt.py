@@ -131,13 +131,13 @@ def main():
         "mixed_precision": "bf16",
     }
 
-    experiment_args = dict(
-        experiment="boneless_attn"
-    )
-
     # experiment_args = dict(
-    #     experiment="relative_optimizers"
+    #     experiment="boneless_attn"
     # )
+
+    experiment_args = dict(
+        experiment="relative_optimizers"
+    )
 
     # experiment_args = dict(
     #     experiment="calibrated_attention"
@@ -374,7 +374,7 @@ def main():
 
 
     if hasattr(exp_module, "patch_optimizer"):
-        optimizer = exp_module.patch_optimizer(model, optimizer, args, experiment_args)
+        optimizer = exp_module.patch_optimizer(model, args, experiment_args)
     else:
         # Optimizer
         # Split weights in two groups, one with weight decay and the other not.
@@ -391,21 +391,22 @@ def main():
         ]
         optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate, betas=(args.beta1, args.beta2), eps=args.eps, fused=not args.compile_optimizer)
 
-        # Scheduler and math around the number of training steps.
-        overrode_max_train_steps = False
-        num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-        if args.max_train_steps is None:
-            args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
-            overrode_max_train_steps = True
 
-        lr_scheduler = get_scheduler(
-            name=args.lr_scheduler_type,
-            optimizer=optimizer,
-            num_warmup_steps=args.num_warmup_steps * accelerator.num_processes,
-            num_training_steps=args.max_train_steps
-            if overrode_max_train_steps
-            else args.max_train_steps * accelerator.num_processes,
-        )
+    # Scheduler and math around the number of training steps.
+    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if args.max_train_steps is None:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+        overrode_max_train_steps = True
+
+    lr_scheduler = get_scheduler(
+        name=args.lr_scheduler_type,
+        optimizer=optimizer,
+        num_warmup_steps=args.num_warmup_steps * accelerator.num_processes,
+        num_training_steps=args.max_train_steps
+        if overrode_max_train_steps
+        else args.max_train_steps * accelerator.num_processes,
+    )
 
 
     # Prepare everything with our `accelerator`.

@@ -4,7 +4,7 @@ from .relative_adam_2 import RelativeAdam2
 
 
 
-def patch_optimizer(model, optimizer, args, exp_args):
+def patch_optimizer(model, args, exp_args):
     no_decay = ["bias", "layer_norm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -21,7 +21,7 @@ def patch_optimizer(model, optimizer, args, exp_args):
     elif exp_args["mode"] == "relative_adam_2":
         optimizer = RelativeAdam2(optimizer_grouped_parameters, param_lr=exp_args["param_lr"], beta1=args.beta1, beta2=args.beta2, param_eps=exp_args["param_eps"], eps=args.eps)
     elif exp_args["mode"] == "base":
-        pass
+        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate, betas=(args.beta1, args.beta2), eps=args.eps, fused=not args.compile_optimizer)
     else:
         raise ValueError(f"Invalid optimizer: {exp_args['mode']}")
 
