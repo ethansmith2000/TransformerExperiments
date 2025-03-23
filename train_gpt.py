@@ -93,10 +93,14 @@ def main():
     args = {
         "num_validation_batches": 25,
         "validate_every": 1000,
-        "dataset_name": "wikitext",
-        "dataset_config_name": "wikitext-103-v1",
+        # "dataset_name": "wikitext",
+        # "dataset_config_name": "wikitext-103-v1",
         # "dataset_name": "gair-prox/FineWeb-pro",
         # "dataset_config_name": "default",
+        "dataset_name": "Skylion007/openwebtext",
+        "dataset_config_name": "plain_text",
+        # "dataset_name": "spachava/openwebtext",
+        # "dataset_config_name": "gpt2-tokenized",
         "train_file": None,
         "validation_file": None,
         "validation_split_percentage": 5,
@@ -119,6 +123,7 @@ def main():
         "overwrite_cache": False,
         "no_keep_linebreaks": False,
         "checkpointing_steps": None,
+        "gradient_checkpointing": False,
         "resume_from_checkpoint": None,
         "with_tracking": True,
         "report_to": "wandb",
@@ -126,8 +131,13 @@ def main():
         "hf_path": None,
         "base_output_dir": None,
         "compile": True,
+        # "compile_mode": "default",
+        "compile_mode": "reduce-overhead",
+        "compile_dynamic": False,
+        "compile_fullgraph": False,
         "compile_optimizer": False,
         "dropout": 0.0,
+        # "mixed_precision": "fp16",
         "mixed_precision": "bf16",
     }
 
@@ -276,7 +286,8 @@ def main():
         # config=config,
     )
 
-    model.gradient_checkpointing_enable()
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -493,7 +504,7 @@ def main():
     progress_bar.update(completed_steps)
 
 
-    forward = torch.compile(model) if args.compile else model.forward
+    forward = torch.compile(model, mode=args.compile_mode, dynamic=args.compile_dynamic, fullgraph=args.compile_fullgraph) if args.compile else model.forward
 
     def opt_step():
         optimizer.step()

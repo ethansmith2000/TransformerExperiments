@@ -28,9 +28,9 @@ def patch_model(model, args, exp_args):
             elif exp_args["mode"] == "polyfit_scaling":
                 m.attn = AttentionPolyFitScaling(dim=dim, heads=heads)
             elif exp_args["mode"] == "learned_scaling":
-                m.attn = AttentionLearnedScaling(dim=dim, heads=heads, **exp_args)
+                m.attn = AttentionLearnedScaling(dim=dim, heads=heads)
             elif exp_args["mode"] == "softmax_plus_one":
-                m.attn = AttentionSoftmaxPlusOne(dim=dim, heads=heads, **exp_args)
+                m.attn = AttentionSoftmaxPlusOne(dim=dim, heads=heads)
             elif exp_args["mode"] == "softmax_plus_fn":
                 m.attn = AttentionSoftmaxPlusFN(dim=dim, heads=heads)
             else:
@@ -56,15 +56,15 @@ def get_run_name(args, exp_args):
 
 extra_args = {
     # base
-    "mode": "base",
+    # "mode": "base",
 
     # # relative scaling
     # "mode": "relative_scaling_1",
-    # "base_seq_len": 2048,
+    # "base_seq_len": 256,
 
     # # relative scaling 2
     # "mode": "relative_scaling_2",
-    # "base_seq_len": 2048,
+    # "base_seq_len": 256,
     # "attn_bias": 1.5,
     # "learned_bias": False,
 
@@ -78,7 +78,7 @@ extra_args = {
     # "mode": "polyfit_scaling",
 
     # # learned scaling
-    # "mode": "learned_scaling",
+    "mode": "learned_scaling",
 
     # # softmax plus one
     # "mode": "softmax_plus_one",
