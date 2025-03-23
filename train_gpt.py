@@ -105,6 +105,9 @@ def main():
         "model_name_or_path": "openai-community/gpt2",
         "per_device_train_batch_size": 28,
         "learning_rate": 5.0e-5,
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "eps": 1e-8,
         "weight_decay": 0.01,
         "num_train_epochs": 5,
         "max_train_steps": None,
@@ -124,12 +127,17 @@ def main():
         "hf_path": None,
         "base_output_dir": None,
         "compile": True,
+        "compile_optimizer": False,
         "dropout": 0.0,
         "mixed_precision": "fp16",
     }
 
+    # experiment_args = dict(
+    #     experiment="boneless_attn"
+    # )
+
     experiment_args = dict(
-        experiment="boneless_attn"
+        experiment="relative_optimizers"
     )
 
     #
@@ -267,12 +275,6 @@ def main():
 
     model.gradient_checkpointing_enable()
 
-    #######################################
-    exp_module.patch_model(model, experiment_args)
-    #######################################
-
-    print(model)
-
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
     embedding_size = model.get_input_embeddings().weight.shape[0]
@@ -373,7 +375,7 @@ def main():
             "weight_decay": 0.0,
         },
     ]
-    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
+    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate, betas=(args.beta1, args.beta2), eps=args.eps, fused=not args.compile_optimizer)
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -390,6 +392,12 @@ def main():
         if overrode_max_train_steps
         else args.max_train_steps * accelerator.num_processes,
     )
+
+    #######################################
+    model, optimizer = exp_module.patch_model(model, optimizer, args, experiment_args)
+    #######################################
+
+    print(model)
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
@@ -476,6 +484,11 @@ def main():
 
     forward = torch.compile(model) if args.compile else model.forward
 
+    def opt_step():
+        optimizer.step()
+
+    opt_step = torch.compile(opt_step) if args.compile_optimizer else opt_step
+
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         if args.with_tracking:
@@ -508,7 +521,7 @@ def main():
                 if step % 10 == 0:
                     profile_gpus()
 
-                optimizer.step()
+                opt_step()
                 lr_scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
 

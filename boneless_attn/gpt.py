@@ -134,13 +134,16 @@ class ResidualLinear(nn.Linear):
         return input + super().forward(input)
 
 # class ResidualLinear(nn.Linear):
-#     def __init__(self, in_features, out_features, bias=False, scale=0.5):
+#     def __init__(self, in_features, out_features, bias=False, scale=1.0, trainable_scale=False):
 #         super().__init__(in_features, out_features, bias)
 #         scale = torch.Tensor([scale])
-#         self.register_buffer("scale", scale)
+#         if trainable_scale:
+#             self.scale = nn.Parameter(scale)
+#         else:
+#             self.register_buffer("scale", scale)
 
 #     def forward(self, input):
-#         return input * self.scale + super().forward(input) * self.scale
+#         return input * self.scale + super().forward(input) * (1 - self.scale)
 
 
 class ResidualAttention(BaselineAttention):
@@ -161,7 +164,7 @@ class ResidualAttention(BaselineAttention):
             # nn.init.xavier_uniform_(self.o_attn.weight)
 
 
-def patch_model(model, exp_args):
+def patch_model(model, optimizer, args, exp_args):
     idx = 0
     for n,m in model.named_modules():
         if hasattr(m, "attn"):
@@ -177,6 +180,8 @@ def patch_model(model, exp_args):
                 m.attn = nn.Identity()
             else:
                 raise ValueError(f"Invalid mode: {exp_args['mode']}")
+
+    return model, optimizer
             
 
 
@@ -230,18 +235,20 @@ extra_args = {
     # "mod_o": True,
 
     # residual no v/o
-    # "mode": "residual",
-    # "mod_q": True,
-    # "mod_k": True,
-    # "mod_v": False,
-    # "mod_o": False,
-    
-    # residual
     "mode": "residual",
     "mod_q": True,
     "mod_k": True,
-    "mod_v": True,
-    "mod_o": True,
+    "mod_v": False,
+    "mod_o": False,
+    # "trainable_scale": True,
+    
+    # residual
+    # "mode": "residual",
+    # "mod_q": True,
+    # "mod_k": True,
+    # "mod_v": True,
+    # "mod_o": True,
+    # "trainable_scale": True,
     
     
     

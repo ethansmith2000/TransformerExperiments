@@ -156,20 +156,20 @@ class DoubleFeedForward(nn.Module):
 
 
 
-def patch_model(model, args):
+def patch_model(model, optimizer, args, exp_args):
     for name, module in model.named_modules():
         if hasattr(module, 'ff'):
-            if args['mode'] == "geglu":
+            if exp_args['mode'] == "geglu":
                 del module.ff
                 module.ff = GegluFeedForward(module.ff.net[0].in_features, 
-                                                        module.ff.net[0].in_features * args["mult"],
+                                                        module.ff.net[0].in_features * exp_args["mult"],
                                                         module.ff.net[2].p,
                                                         # args.activation, 
                                                         # args.act_power
                                                         )
-            elif args['mode'] == "double":
+            elif exp_args['mode'] == "double":
                 module.ff = DoubleFeedForward(module.ff.net[0].in_features,
-                                                        module.ff.net[0].in_features * args["mult"],
+                                                        module.ff.net[0].in_features * exp_args["mult"],
                                                         module.ff.net[2].p,
                                                         # args.activation, 
                                                         # args.act_power
@@ -177,6 +177,8 @@ def patch_model(model, args):
 
     # init weights again
     model.init_weights()
+
+    return model, optimizer
 
 
 # def get_run_name(args, exp_args):
