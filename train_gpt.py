@@ -131,8 +131,8 @@ def main():
         "hf_path": None,
         "base_output_dir": None,
         "compile": True,
-        # "compile_mode": "default",
-        "compile_mode": "reduce-overhead",
+        "compile_mode": "default",
+        # "compile_mode": "reduce-overhead",
         "compile_dynamic": False,
         "compile_fullgraph": False,
         "compile_optimizer": False,
@@ -145,13 +145,17 @@ def main():
     #     experiment="boneless_attn"
     # )
 
-    experiment_args = dict(
-        experiment="relative_optimizers"
-    )
+    # experiment_args = dict(
+    #     experiment="relative_optimizers"
+    # )
 
     # experiment_args = dict(
     #     experiment="calibrated_attention"
     # )
+
+    experiment_args = dict(
+        experiment="sam_optimizers"
+    )
 
     #
     exp_module = importlib.import_module(f"{experiment_args['experiment']}.gpt")

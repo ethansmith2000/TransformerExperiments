@@ -1,7 +1,36 @@
 import torch
 from .relative_adam import RelativeAdam
 from .relative_adam_2 import RelativeAdam2
+from torch import nn
+from typing import Optional, Tuple
+from einops import rearrange
+from torch.nn import functional as F
+from torch.nn.functional import scaled_dot_product_attention as sdpa
 
+class AttentionBase(nn.Module):
+    """
+    Causal multihead attention that uses torch's SDPA 
+    """
+    def __init__(self, dim=512, heads=8):
+        super().__init__()
+        self.heads = heads
+        self.to_qkv = nn.Linear(dim, dim*3, bias=False)
+        self.to_out = nn.Linear(dim, dim, bias=True)
+
+    def forward(self, x,
+            layer_past: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+        **kwargs,):
+
+        b, n, d, h = (*x.shape, self.heads)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (self.to_qkv(x).chunk(3, dim=-1)))
+        outputs = (self.to_out(rearrange(sdpa(q, k, v, is_causal=True), 'b h n d -> b n (h d)')), None)
+        return outputs
 
 
 def patch_optimizer(model, args, exp_args):
@@ -26,6 +55,16 @@ def patch_optimizer(model, args, exp_args):
         raise ValueError(f"Invalid optimizer: {exp_args['mode']}")
 
     return optimizer
+
+
+# def patch_model(model, args, exp_args):
+#     # just to make things run faster
+#     for n,m in model.named_modules():
+#         if hasattr(m, "attn"):
+#             dim = model.config.n_embd
+#             heads = m.attn.num_heads
+
+#             m.attn = AttentionBase(dim=dim, heads=heads)
 
 
 def get_run_name(args, exp_args):
