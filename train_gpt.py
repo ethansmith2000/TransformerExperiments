@@ -145,17 +145,17 @@ def main():
     #     experiment="boneless_attn"
     # )
 
-    # experiment_args = dict(
-    #     experiment="relative_optimizers"
-    # )
+    experiment_args = dict(
+        experiment="relative_optimizers"
+    )
 
     # experiment_args = dict(
     #     experiment="calibrated_attention"
     # )
 
-    experiment_args = dict(
-        experiment="sam_optimizers"
-    )
+    # experiment_args = dict(
+    #     experiment="sam_optimizers"
+    # )
 
     #
     exp_module = importlib.import_module(f"{experiment_args['experiment']}.gpt")

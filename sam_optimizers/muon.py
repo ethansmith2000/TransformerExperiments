@@ -13,17 +13,15 @@ class Muon(torch.optim.Optimizer):
         params,
         lr=0.02,
         beta1=0.95,
-        beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
         ns_steps=6,
         exp_avg_momentum=True,
-        nesterov=False,
+        nesterov=True,
     ):
         defaults = dict(
             lr=lr,
             beta1=beta1,
-            beta2=beta2,
             eps=eps,
             weight_decay=weight_decay,
             ns_steps=ns_steps,
@@ -55,6 +53,9 @@ class Muon(torch.optim.Optimizer):
 
                 # do Muon update
                 og_shape = grad.shape
+                if grad.ndim != 2:
+                    grad = grad.view(grad.size(0), -1)
+
                 state = self.state[param]
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(grad)
@@ -62,14 +63,11 @@ class Muon(torch.optim.Optimizer):
 
                 state["step"] += 1
 
-                if grad.ndim > 2:
-                    grad = grad.view(grad.size(0), -1)
-
                 # momentum update   
                 if group['exp_avg_momentum']:
-                    state["exp_avg"].lerp_(grad, 1 - group["momentum"])
+                    state["exp_avg"].lerp_(grad, 1 - group["beta1"])
                 else:
-                    state["exp_avg"].mul_(group["momentum"]).add_(grad)
+                    state["exp_avg"].mul_(group["beta1"]).add_(grad)
 
                 update = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov"] else state["exp_avg"]
 
