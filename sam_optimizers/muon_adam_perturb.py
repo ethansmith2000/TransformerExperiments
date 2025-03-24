@@ -12,7 +12,7 @@ class MuonAdamSAM(torch.optim.Optimizer):
         self,
         params,
         lr=0.02,
-        perturb_lr=None,
+        perturb_lr_ratio=None,
         beta1=0.95,
         beta2=0.999,
         eps=1e-8,
@@ -21,10 +21,10 @@ class MuonAdamSAM(torch.optim.Optimizer):
         exp_avg_momentum=True,
         nesterov=False,
     ):
-        perturb_lr = perturb_lr or lr
+        perturb_lr_ratio = perturb_lr_ratio or 1.0
         defaults = dict(
             lr=lr,
-            perturb_lr=perturb_lr,
+            perturb_lr_ratio=perturb_lr_ratio,
             beta1=beta1,
             beta2=beta2,
             eps=eps,
@@ -72,8 +72,9 @@ class MuonAdamSAM(torch.optim.Optimizer):
 
                 if state["step"] > 1:
                     # remove last ADAM perturbation, 
+                    perturb_lr = group["lr"] * group["perturb_lr_ratio"]
                     denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                    param.addcdiv_(state["exp_avg"], denom, value=group["perturb_lr"]/scale)
+                    param.addcdiv_(state["exp_avg"], denom, value=-perturb_lr/scale)
 
                 ############################################################
 
@@ -109,6 +110,7 @@ class MuonAdamSAM(torch.optim.Optimizer):
                 # Do adam perturbation
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
                 # notice subtle lr is postivie instead of negative 
-                param.data.addcdiv_(state["exp_avg"], denom, value=group["perturb_lr"]/scale)
+                perturb_lr = group["lr"] * group["perturb_lr_ratio"]
+                param.data.addcdiv_(state["exp_avg"], denom, value=perturb_lr/scale)
 
 

@@ -9,17 +9,17 @@ class NesterovPerturb(torch.optim.Optimizer):
         self,
         params,
         lr=1e-4,
-        perturb_lr=None,
+        perturb_lr_ratio=None,
         beta1=0.90,
         beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
         nesterov_as_perturb=False,
     ):
-        perturb_lr = perturb_lr or lr
+        perturb_lr_ratio = perturb_lr_ratio or lr
         defaults = dict(
             lr=lr,
-            perturb_lr=perturb_lr,
+            perturb_lr_ratio=perturb_lr_ratio,
             beta1=beta1,
             beta2=beta2,
             eps=eps,
@@ -65,9 +65,10 @@ class NesterovPerturb(torch.optim.Optimizer):
 
                 if state["step"] > 1:
                     # remove last weight decay perturbation
+                    perturb_lr = group["lr"] * group["perturb_lr_ratio"]
                     perturb = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov_as_perturb"] else state["exp_avg"]
                     denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                    param.data.addcdiv_(perturb, denom, value=-group["lr"]/scale)
+                    param.data.addcdiv_(perturb, denom, value=-perturb_lr/scale)
                 ############################################################
 
                 # do Adam update
@@ -83,7 +84,7 @@ class NesterovPerturb(torch.optim.Optimizer):
 
                 # update
                 denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                param.data.addcdiv_(update, denom, value=-group["lr"])
+                param.data.addcdiv_(update, denom, value=-perturb_lr)
 
                 # weight decay
                 param.data.mul_(1 - group["lr"] * group["weight_decay"])
@@ -93,6 +94,6 @@ class NesterovPerturb(torch.optim.Optimizer):
                 perturb = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov_as_perturb"] else state["exp_avg"]
 
                 # Do other momentum perturbation
-                param.data.addcdiv_(perturb, denom, value=group["lr"]/scale)
+                param.data.addcdiv_(perturb, denom, value=perturb_lr/scale)
 
 

@@ -13,7 +13,6 @@ class AdamWeightDecaySAM(torch.optim.Optimizer):
         beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
-        exp_avg_momentum=True,
 
     ):
         defaults = dict(
@@ -22,7 +21,6 @@ class AdamWeightDecaySAM(torch.optim.Optimizer):
             beta2=beta2,
             eps=eps,
             weight_decay=weight_decay,
-            exp_avg_momentum=exp_avg_momentum,
         )
 
         super().__init__(params, defaults)

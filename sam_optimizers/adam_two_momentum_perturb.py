@@ -9,7 +9,7 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
         self,
         params,
         lr=1e-4,
-        perturb_lr=None,
+        perturb_lr_ratio=None,
         beta1=0.90,
         beta1_perturb=0.80,
         beta2=0.999,
@@ -18,10 +18,10 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
         nesterov=False,
         perturbation_start_step=50,
     ):
-        perturb_lr = perturb_lr or lr
+        perturb_lr_ratio = perturb_lr_ratio or 1.0
         defaults = dict(
             lr=lr,
-            perturb_lr=perturb_lr,
+            perturb_lr_ratio=perturb_lr_ratio,
             beta1=beta1,
             beta2=beta2,
             eps=eps,
@@ -70,8 +70,9 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
 
                 if state["step"] > 1 and state["step"] > group["perturbation_start_step"]:
                     # remove last weight decay perturbation
+                    perturb_lr = group["lr"] * group["perturb_lr_ratio"]
                     denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
-                    param.data.addcdiv_(state["exp_avg_perturb"], denom, value=-group["lr"]/scale)
+                    param.data.addcdiv_(state["exp_avg_perturb"], denom, value=-perturb_lr/scale)
                 ############################################################
 
                 # momentum update   
@@ -94,6 +95,7 @@ class AdamTwoMomentumSAM(torch.optim.Optimizer):
 
                 # Do other momentum perturbation
                 if state["step"] > group["perturbation_start_step"]:
-                    param.data.addcdiv_(state["exp_avg_perturb"], denom, value=group["lr"]/scale)
+                    perturb_lr = group["lr"] * group["perturb_lr_ratio"]
+                    param.data.addcdiv_(state["exp_avg_perturb"], denom, value=perturb_lr/scale)
 
 

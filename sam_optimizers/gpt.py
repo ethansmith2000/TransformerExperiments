@@ -25,13 +25,13 @@ def patch_optimizer(model, args, exp_args):
         },
     ]
     if exp_args["mode"] == "adam_two_momentum_perturb":
-        optimizer = AdamTwoMomentumSAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr=exp_args["perturb_lr"], beta1_perturb=exp_args["beta1_perturb"], eps=args.eps)
+        optimizer = AdamTwoMomentumSAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr_ratio=exp_args["perturb_lr_ratio"], beta1_perturb=exp_args["beta1_perturb"], eps=args.eps)
     elif exp_args["mode"] == "adam_wd_perturb":
-        optimizer = AdamWeightDecaySAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr=exp_args["perturb_lr"], eps=args.eps)
+        optimizer = AdamWeightDecaySAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, eps=args.eps)
     elif exp_args["mode"] == "muon_adam_perturb":
-        optimizer = MuonAdamSAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr=exp_args["perturb_lr"], eps=args.eps)
+        optimizer = MuonAdamSAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr_ratio=exp_args["perturb_lr_ratio"], eps=args.eps)
     elif exp_args["mode"] == "nesterov_perturb":
-        optimizer = NesterovPerturb(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr=exp_args["perturb_lr"], eps=args.eps)
+        optimizer = NesterovPerturb(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr_ratio=exp_args["perturb_lr_ratio"], eps=args.eps)
     elif exp_args["mode"] == "muon":
         optimizer = Muon(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, eps=args.eps)
     elif exp_args["mode"] == "adam":
@@ -61,17 +61,16 @@ extra_args = {
     # "mode": "muon",
 
     "mode": "adam_two_momentum_perturb",
-    "perturb_lr": 7.5e-5,
-    "beta1_perturb": 0.80,
+    "perturb_lr_ratio": 1.0,
+    "beta1_perturb": 0.95,
 
     # "mode": "adam_wd_perturb",
-    # "perturb_lr": 1e-4,
 
     # "mode": "muon_adam_perturb",
-    # "perturb_lr": 1e-4,
+    # "perturb_lr_ratio": 1e-4,
 
     # "mode": "nesterov_perturb",
-    # "perturb_lr": 1e-4,
+    # "perturb_lr_ratio": 1e-4,
 
     
     
