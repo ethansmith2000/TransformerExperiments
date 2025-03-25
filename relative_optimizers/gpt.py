@@ -2,6 +2,7 @@ import torch
 from .relative_adam import RelativeAdam
 from .muon import Muon
 from .relative_muon import RelativeMuon
+from .relative_muon_2 import RelativeMuon2
 from torch import nn
 from typing import Optional, Tuple
 from einops import rearrange
@@ -24,15 +25,21 @@ def patch_optimizer(model, args, exp_args):
     ]
 
     lr = exp_args.get("lr", args.learning_rate)
+    weight_decay = exp_args.get("weight_decay", args.weight_decay)
+    beta1 = exp_args.get("beta1", args.beta1)
+    beta2 = exp_args.get("beta2", args.beta2)
+    eps = exp_args.get("eps", args.eps)
 
     if exp_args["mode"] == "relative_adam":
-        optimizer = RelativeAdam(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=lr, lr_weight=exp_args["lr_weight"], param_lr=exp_args["param_lr"], param_eps=exp_args["param_eps"], eps=args.eps)
+        optimizer = RelativeAdam(optimizer_grouped_parameters, weight_decay=weight_decay, beta1=beta1, beta2=beta2, lr=lr, lr_weight=exp_args["lr_weight"], param_lr=exp_args["param_lr"], param_eps=exp_args["param_eps"], eps=eps)
     elif exp_args["mode"] == "adam":
-        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=lr, betas=(args.beta1, args.beta2), eps=args.eps, fused=not args.compile_optimizer)
+        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=lr, betas=(beta1, beta2), eps=eps, fused=not args.compile_optimizer, weight_decay=weight_decay)
     elif exp_args["mode"] == "muon":
-        optimizer = Muon(optimizer_grouped_parameters, lr=lr, beta1=args.beta1, eps=args.eps, weight_decay=args.weight_decay)
+        optimizer = Muon(optimizer_grouped_parameters, lr=lr, beta1=beta1, eps=eps, weight_decay=weight_decay)
     elif exp_args["mode"] == "relative_muon":
-        optimizer = RelativeMuon(optimizer_grouped_parameters, lr=lr, beta1=args.beta1, eps=args.eps, weight_decay=args.weight_decay, param_lr=exp_args["param_lr"], param_eps=exp_args["param_eps"], lr_weight=exp_args["lr_weight"], lr_cap=exp_args["lr_cap"])
+        optimizer = RelativeMuon(optimizer_grouped_parameters, lr=lr, beta1=beta1, eps=eps, weight_decay=weight_decay, param_lr=exp_args["param_lr"], param_eps=exp_args["param_eps"], lr_weight=exp_args["lr_weight"], lr_cap=exp_args["lr_cap"])
+    elif exp_args["mode"] == "relative_muon_2":
+        optimizer = RelativeMuon2(optimizer_grouped_parameters, lr=lr, beta1=beta1, eps=eps, weight_decay=weight_decay, param_lr=exp_args["param_lr"], lr_weight=exp_args["lr_weight"])
     else:
         raise ValueError(f"Invalid optimizer: {exp_args['mode']}")
 
@@ -61,22 +68,42 @@ def get_run_name(args, exp_args):
 
 
 extra_args = {
-    # "mode": "base", # ["base", "relative_adam", "relative_adam_2"]
+    # "mode": "adam", # ["base", "relative_adam", "relative_adam_2"]
+    # "lr": 5.0e-5,
+    # "weight_decay": 0.01,
+    # "beta1": 0.9,
+    # "beta2": 0.99,
 
-    # "mode": "relative_adam",
-    # "param_eps": 1e-4,
-    # "lr_weight": 0.5,
-    # "param_lr": 0.005,
-    # "lr_cap": 0.1,
+    "mode": "relative_adam",
+    "lr": 5.0e-5,
+    "weight_decay": 0.1,
+    "beta1": 0.9,
+    "beta2": 0.99,
+    "param_eps": 1e-4,
+    "lr_weight": 0.4,
+    "param_lr": 0.01,
+    "lr_cap": 0.1,
 
-    "mode": "muon",
-    "lr": 0.02,
+    # "mode": "muon",
+    # "lr": 2.0e-3,
+    # "weight_decay": 0.01,
+    # "beta1": 0.95,
+
 
     # "mode": "relative_muon",
-    # "lr": 0.02,
-    # "param_lr": 0.005,
+    # "lr": 2.0e-3,
+    # "weight_decay": 0.1,
+    # "beta1": 0.95,
+    # "param_lr": 0.1,
     # "param_eps": 1e-4,
     # "lr_weight": 0.5,
-    # "lr_cap": 0.1,
+    # "lr_cap": 0.5,
+
+    # "mode": "relative_muon_2",
+    # "lr": 2.0e-3,
+    # "weight_decay": 0.1,
+    # "beta1": 0.95,
+    # "param_lr": 0.1,
+    # "lr_weight": 0.5,
 
 }

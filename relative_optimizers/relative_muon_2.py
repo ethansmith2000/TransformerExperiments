@@ -28,7 +28,7 @@ def zeropower_via_newtonschulz5(G, steps=10, eps=1e-7):
     return X
 
 
-class RelativeMuon(torch.optim.Optimizer):
+class RelativeMuon2(torch.optim.Optimizer):
 
     def __init__(
         self,
@@ -41,9 +41,7 @@ class RelativeMuon(torch.optim.Optimizer):
         exp_avg_momentum=True,
         nesterov=False,
         param_lr=0.005,
-        param_eps=1e-4,
         lr_weight=0.5,
-        lr_cap=0.01,
     ):
         defaults = dict(
             lr=lr,
@@ -54,9 +52,7 @@ class RelativeMuon(torch.optim.Optimizer):
             exp_avg_momentum=exp_avg_momentum,
             nesterov=nesterov,
             param_lr=param_lr,
-            param_eps=param_eps,
             lr_weight=lr_weight,
-            lr_cap=lr_cap,
         )
 
         super().__init__(params, defaults)
@@ -111,12 +107,12 @@ class RelativeMuon(torch.optim.Optimizer):
                 # weight decay
                 param.data.mul_(1 - group["lr"] * group["weight_decay"])
 
-                # regular update
-                param.data.add_(g, alpha=-(group['lr'] * group['lr_weight']))
+                # update
+                mom_scaled_update = (g * (update.abs().squeeze()))
+                regular_update = g
+                param.data.add_(mom_scaled_update, alpha=-(group['param_lr'] * (1 - group['lr_weight'])))
+                param.data.add_(regular_update, alpha=-(group['lr'] * group['lr_weight']))
 
-                # parameter-level learning rate
-                update = (g * (param.abs() + group['param_eps'])) * (-(group['param_lr'] * (1-group['lr_weight'])))
-                param.data.add_(torch.clamp(update, max=group['lr_cap'], min=-group['lr_cap']))
 
 
 
