@@ -41,4 +41,4 @@ class RelativeAdam(torch.optim.Optimizer):
                 p.data.add_(g, alpha=-(group['lr'] * group['lr_weight']) / scale)
 
                 # parameter-level learning rate
-                p.data.add_(torch.clamp(g * (p.abs() + group['param_eps']), max=group['lr_cap']), alpha=-(group['param_lr'] * (1-group['lr_weight'])) / scale)
+                p.data.add_(torch.clamp(g * (p.abs() + group['param_eps']), max=group['lr_cap'], min=-group['lr_cap']), alpha=-(group['param_lr'] * (1-group['lr_weight'])) / scale)

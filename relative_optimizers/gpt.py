@@ -76,13 +76,13 @@ extra_args = {
 
     "mode": "relative_adam",
     "lr": 5.0e-5,
-    "weight_decay": 0.1,
+    "weight_decay": 0.2,
     "beta1": 0.9,
-    "beta2": 0.99,
+    "beta2": 0.98,
     "param_eps": 1e-4,
     "lr_weight": 0.4,
     "param_lr": 0.01,
-    "lr_cap": 0.1,
+    "lr_cap": 0.01,
 
     # "mode": "muon",
     # "lr": 2.0e-3,
