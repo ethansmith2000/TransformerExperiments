@@ -17,7 +17,7 @@ class Muon(torch.optim.Optimizer):
         weight_decay=0.01,
         ns_steps=6,
         exp_avg_momentum=True,
-        nesterov=True,
+        nesterov=False,
     ):
         defaults = dict(
             lr=lr,

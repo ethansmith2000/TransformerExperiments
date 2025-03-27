@@ -24,18 +24,25 @@ def patch_optimizer(model, args, exp_args):
             "weight_decay": 0.0,
         },
     ]
+
+    lr = exp_args.get("lr", args.learning_rate)
+    weight_decay = exp_args.get("weight_decay", args.weight_decay)
+    beta1 = exp_args.get("beta1", args.beta1)
+    beta2 = exp_args.get("beta2", args.beta2)
+    eps = exp_args.get("eps", args.eps)
+
     if exp_args["mode"] == "adam_two_momentum_perturb":
-        optimizer = AdamTwoMomentumSAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr_ratio=exp_args["perturb_lr_ratio"], beta1_perturb=exp_args["beta1_perturb"], eps=args.eps)
+        optimizer = AdamTwoMomentumSAM(optimizer_grouped_parameters, beta1=beta1, beta2=beta2, lr=lr, perturb_lr_ratio=exp_args["perturb_lr_ratio"], beta1_perturb=exp_args["beta1_perturb"], eps=eps)
     elif exp_args["mode"] == "adam_wd_perturb":
-        optimizer = AdamWeightDecaySAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, eps=args.eps)
+        optimizer = AdamWeightDecaySAM(optimizer_grouped_parameters, beta1=beta1, beta2=beta2, lr=lr, eps=eps)
     elif exp_args["mode"] == "muon_adam_perturb":
-        optimizer = MuonAdamSAM(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr_ratio=exp_args["perturb_lr_ratio"], eps=args.eps)
+        optimizer = MuonAdamSAM(optimizer_grouped_parameters, beta1=beta1, beta2=beta2, lr=lr, perturb_lr_ratio=exp_args["perturb_lr_ratio"], eps=eps)
     elif exp_args["mode"] == "nesterov_perturb":
-        optimizer = NesterovPerturb(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, perturb_lr_ratio=exp_args["perturb_lr_ratio"], eps=args.eps)
+        optimizer = NesterovPerturb(optimizer_grouped_parameters, beta1=beta1, beta2=beta2, lr=lr, perturb_lr_ratio=exp_args["perturb_lr_ratio"], eps=eps)
     elif exp_args["mode"] == "muon":
-        optimizer = Muon(optimizer_grouped_parameters, beta1=args.beta1, beta2=args.beta2, lr=args.learning_rate, eps=args.eps)
+        optimizer = Muon(optimizer_grouped_parameters, beta1=beta1, lr=lr, eps=eps)
     elif exp_args["mode"] == "adam":
-        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate, betas=(args.beta1, args.beta2), eps=args.eps, fused=not args.compile_optimizer)
+        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=lr, betas=(beta1, beta2), eps=eps, fused=not args.compile_optimizer)
     else:
         raise ValueError(f"Invalid optimizer: {exp_args['mode']}")
 
@@ -58,11 +65,15 @@ extra_args = {
     # "mode": "adam", # ["adam", "muon", "nesterov_perturb", "adam_two_momentum_perturb", "adam_wd_perturb", "muon_adam_perturb"]
     # "mode": "adam",
 
-    # "mode": "muon",
+    "mode": "muon",
+    "lr": 2.0e-3,
+    "weight_decay": 0.1,
+    "beta1": 0.95,
 
-    "mode": "adam_two_momentum_perturb",
-    "perturb_lr_ratio": 1.0,
-    "beta1_perturb": 0.95,
+
+    # "mode": "adam_two_momentum_perturb",
+    # "perturb_lr_ratio": 1.0,
+    # "beta1_perturb": 0.95,
 
     # "mode": "adam_wd_perturb",
 
@@ -72,6 +83,12 @@ extra_args = {
     # "mode": "nesterov_perturb",
     # "perturb_lr_ratio": 1e-4,
 
+    # "mode": "muon_adam_perturb",
+    # "lr": 2.0e-3,
+    # "weight_decay": 0.1,
+    # "beta1": 0.95,
+    # "beta2": 0.999,
+    # "perturb_lr_ratio": 0.004,
     
     
     

@@ -27,32 +27,31 @@ def zeropower_via_newtonschulz5(G, steps=10, eps=1e-7):
         X = X.T
     return X
 
-
-class RelativeMuon2(torch.optim.Optimizer):
+class CautionAdamMuon(torch.optim.Optimizer):
 
     def __init__(
         self,
         params,
         lr=0.02,
         beta1=0.95,
+        beta2=0.999,
         eps=1e-8,
         weight_decay=0.01,
         ns_steps=6,
-        exp_avg_momentum=True,
         nesterov=False,
-        param_lr=0.005,
-        lr_weight=0.5,
+        update_type="adam",
+        caution_mode="caution",
     ):
         defaults = dict(
             lr=lr,
             beta1=beta1,
+            beta2=beta2,
             eps=eps,
             weight_decay=weight_decay,
             ns_steps=ns_steps,
-            exp_avg_momentum=exp_avg_momentum,
             nesterov=nesterov,
-            param_lr=param_lr,
-            lr_weight=lr_weight,
+            update_type=update_type,
+            caution_mode=caution_mode,
         )
 
         super().__init__(params, defaults)
@@ -77,43 +76,60 @@ class RelativeMuon2(torch.optim.Optimizer):
                 if grad is None:
                     continue
 
-                # do Muon update
+                state = self.state[param]
+
                 og_shape = grad.shape
                 if grad.ndim != 2:
                     grad = grad.view(grad.size(0), -1)
-                    
-                state = self.state[param]
+
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(grad)
+                    state["exp_avg_sq"] = torch.zeros_like(grad)
                     state["step"] = 0
 
+                # do Adam update
                 state["step"] += 1
 
-                # momentum update   
-                if group['exp_avg_momentum']:
-                    state["exp_avg"].lerp_(grad, 1 - group["beta1"])
-                else:
-                    state["exp_avg"].mul_(group["beta1"]).add_(grad)
+                bias_correction1 = 1 - group["beta1"]**state["step"]
+                bias_correction2 = 1 - group["beta2"]**state["step"]
+                scale = bias_correction1 / bias_correction2**0.5
 
-                update = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov"] else state["exp_avg"]
+                # first and second moment update
+                state["exp_avg"].lerp_(grad, 1 - group["beta1"])
+                state["exp_avg_sq"].lerp_(grad.pow(2), 1 - group["beta2"])
+
+                muon_update = grad.lerp_(state["exp_avg"], group["beta1"]) if group["nesterov"] else state["exp_avg"]
 
                 # orthogonalization
-                g = zeropower_via_newtonschulz5(update, steps=group["ns_steps"])
+                muon_update = zeropower_via_newtonschulz5(muon_update, steps=group["ns_steps"])
 
                 # rescaling
-                g *= max(1, g.size(0)/g.size(1))**0.5
-                g = g.view(og_shape).type_as(param.data)
+                muon_update *= max(1, muon_update.size(0)/muon_update.size(1))**0.5
+                # muon_update = muon_update.view(og_shape).type_as(param.data)
+
+                # adam update
+                denom = state["exp_avg_sq"].sqrt().add_(group["eps"])
+                adam_update = state["exp_avg"].div(denom)
 
                 # weight decay
                 param.data.mul_(1 - group["lr"] * group["weight_decay"])
 
-                # update
-                # mom_scaled_update = (g * (update.abs().squeeze()))
-                mom_scaled_update = (g.abs() * (update.squeeze()))
-                regular_update = g
-                param.data.add_(mom_scaled_update, alpha=-(group['param_lr'] * (1 - group['lr_weight'])))
-                param.data.add_(regular_update, alpha=-(group['lr'] * group['lr_weight']))
-
+                # caution mask
+                if group["caution_mode"] == "caution":
+                    mask = (adam_update * muon_update > 0).to(muon_update.dtype).squeeze()
+                    update = muon_update if group["update_type"] == "muon" else adam_update
+                    param.data.add_(update.squeeze() * mask/(mask.mean()+group["eps"]), alpha=-group["lr"])
+                elif group["caution_mode"] == "scaling":                    
+                    # Calculate cosine similarity using torch's function (faster)
+                    cosine_sim = torch.nn.functional.cosine_similarity(adam_update.flatten().unsqueeze(0), muon_update.flatten().unsqueeze(0)).item()
+                    
+                    # Scale factor based on cosine similarity (higher similarity = higher scale)
+                    # When cosine_sim is 1, scale is 1; when cosine_sim is -1, scale is close to 0
+                    scale_factor = (cosine_sim + 1)  # Map from [-1,1] to [0,2]
+                    
+                    # Apply the scaling to the update
+                    update = muon_update if group["update_type"] == "muon" else adam_update
+                    param.data.add_(update * scale_factor, alpha=-group["lr"])
 
 
 

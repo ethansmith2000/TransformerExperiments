@@ -9,6 +9,7 @@ from einops import rearrange
 from torch.nn import functional as F
 from torch.nn.functional import scaled_dot_product_attention as sdpa
 from hf_gpt_blocks.hf_gpt import patch_gpt
+from .caution_muon_adam import CautionAdamMuon
 
 
 def patch_optimizer(model, args, exp_args):
@@ -40,6 +41,8 @@ def patch_optimizer(model, args, exp_args):
         optimizer = RelativeMuon(optimizer_grouped_parameters, lr=lr, beta1=beta1, eps=eps, weight_decay=weight_decay, param_lr=exp_args["param_lr"], param_eps=exp_args["param_eps"], lr_weight=exp_args["lr_weight"], lr_cap=exp_args["lr_cap"])
     elif exp_args["mode"] == "relative_muon_2":
         optimizer = RelativeMuon2(optimizer_grouped_parameters, lr=lr, beta1=beta1, eps=eps, weight_decay=weight_decay, param_lr=exp_args["param_lr"], lr_weight=exp_args["lr_weight"])
+    elif exp_args["mode"] == "caution_muon_adam":
+        optimizer = CautionAdamMuon(optimizer_grouped_parameters, lr=lr, beta1=beta1, beta2=beta2, eps=eps, weight_decay=weight_decay, update_type=exp_args["update_type"], caution_mode=exp_args["caution_mode"])
     else:
         raise ValueError(f"Invalid optimizer: {exp_args['mode']}")
 
@@ -74,15 +77,15 @@ extra_args = {
     # "beta1": 0.9,
     # "beta2": 0.99,
 
-    "mode": "relative_adam",
-    "lr": 5.0e-5,
-    "weight_decay": 0.2,
-    "beta1": 0.9,
-    "beta2": 0.98,
-    "param_eps": 1e-4,
-    "lr_weight": 0.4,
-    "param_lr": 0.01,
-    "lr_cap": 0.01,
+    # "mode": "relative_adam",
+    # "lr": 5.0e-5,
+    # "weight_decay": 0.1,
+    # "beta1": 0.9,
+    # "beta2": 0.98,
+    # "param_eps": 1e-4,
+    # "lr_weight": 0.5,
+    # "param_lr": 0.008,
+    # "lr_cap": 0.02,
 
     # "mode": "muon",
     # "lr": 2.0e-3,
@@ -106,4 +109,11 @@ extra_args = {
     # "param_lr": 0.1,
     # "lr_weight": 0.5,
 
+    "mode": "caution_muon_adam",
+    "lr": 2.0e-3,
+    "weight_decay": 0.1,
+    "beta1": 0.95,
+    "beta2": 0.999,
+    "caution_mode": "caution",
+    "update_type": "muon",
 }
