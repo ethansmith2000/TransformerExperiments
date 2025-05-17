@@ -64,7 +64,10 @@ import pynvml
 import psutil
 
 import importlib
+from contextlib import nullcontext
 #
+from moe_special.moe import MoeLoadBalancingContext, mlp2moe, linear2moe    
+import torch 
 
 
 def profile_gpus():
@@ -106,7 +109,7 @@ def main():
         "validation_split_percentage": 5,
         # "model_name_or_path": "openai-community/gpt2-medium",
         "model_name_or_path": "openai-community/gpt2",
-        "per_device_train_batch_size": 28,
+        "per_device_train_batch_size": 18,
         "learning_rate": 5.0e-5,
         "beta1": 0.9,
         "beta2": 0.999,
@@ -123,7 +126,7 @@ def main():
         "overwrite_cache": False,
         "no_keep_linebreaks": False,
         "checkpointing_steps": None,
-        "gradient_checkpointing": False,
+        "gradient_checkpointing": True,
         "resume_from_checkpoint": None,
         "with_tracking": True,
         "report_to": "wandb",
@@ -139,34 +142,14 @@ def main():
         "dropout": 0.0,
         # "mixed_precision": "fp16",
         "mixed_precision": "bf16",
+        # "moe_mode": "expert_mlp", # "expert_mlp", "expert_linear_mlp"
+        "moe_mode": "expert_linear_mlp",
+        "num_experts": 4,
+        "experts_topk": 1,
+        "experts_norm_topk": True,
+        "use_shared_expert": False,
+        "output_dir": None,
     }
-
-    # experiment_args = dict(
-    #     experiment="boneless_attn"
-    # )
-
-    # experiment_args = dict(
-    #     experiment="relative_optimizers"
-    # )
-
-    # experiment_args = dict(
-    #     experiment="calibrated_attention"
-    # )
-
-    experiment_args = dict(
-        experiment="sam_optimizers"
-    )
-
-    #
-    exp_module = importlib.import_module(f"{experiment_args['experiment']}.gpt")
-
-    # defaults
-    extra_args = exp_module.extra_args
-    for k, v in extra_args.items():
-        if k not in experiment_args:
-            experiment_args[k] = v
-    
-    args, run_name = exp_module.get_run_name(args, experiment_args)
 
     args = SimpleNamespace(**args)
 
@@ -183,8 +166,9 @@ def main():
         accelerator_log_kwargs["project_dir"] = args.output_dir
 
     accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps, 
-                                                            mixed_precision=args.mixed_precision,
-                                                            **accelerator_log_kwargs)
+                                mixed_precision=args.mixed_precision,
+                                **accelerator_log_kwargs
+                                )
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -280,15 +264,8 @@ def main():
         if "drop" in kwarg:
             setattr(config, kwarg, args.dropout)
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name_or_path, use_fast=True,
-    )
-    model = AutoModelForCausalLM.from_config(
-        config,
-        # args.model_name_or_path,
-        # from_tf=bool(".ckpt" in args.model_name_or_path),
-        # config=config,
-    )
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
+    model = AutoModelForCausalLM.from_config(config)
 
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
@@ -373,38 +350,69 @@ def main():
         logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
     # DataLoaders creation:
-    train_dataloader = DataLoader(
-        train_dataset, shuffle=True, collate_fn=default_data_collator, batch_size=args.per_device_train_batch_size
-    )
-    eval_dataloader = DataLoader(
-        eval_dataset, collate_fn=default_data_collator, batch_size=args.per_device_train_batch_size
-    )
+    train_dataloader = DataLoader(train_dataset, shuffle=True, collate_fn=default_data_collator, batch_size=args.per_device_train_batch_size)
+    eval_dataloader = DataLoader(eval_dataset, collate_fn=default_data_collator, batch_size=args.per_device_train_batch_size)
 
     #######################################
-    if hasattr(exp_module, "patch_model"):
-        model = exp_module.patch_model(model, args, experiment_args)
+    if args.moe_mode == "expert_mlp":
+        for layer in model.transformer.h:
+            expert_constructor = layer.mlp.__class__
+            layer.mlp.c_fc = torch.nn.Linear(min(layer.mlp.c_fc.weight.shape), max(layer.mlp.c_fc.weight.shape))    
+            layer.mlp.c_fc.bias.data.zero_()
+            layer.mlp.c_proj = torch.nn.Linear(max(layer.mlp.c_proj.weight.shape), min(layer.mlp.c_proj.weight.shape))
+            layer.mlp.c_proj.bias.data.zero_()
+            layer.mlp = mlp2moe(
+                            group_name="expert_mlp", 
+                            shared_expert=layer.mlp, 
+                            n_experts=args.num_experts, 
+                            top_k=args.experts_topk, 
+                            norm_topk_prob=args.experts_norm_topk, 
+                            expert_constructor=expert_constructor, 
+                            expert_config=model.config,
+                            hidden_size=model.config.n_embd,
+                            intermediate_size=model.config.n_embd * 4, 
+                            use_shared_expert=args.use_shared_expert
+                            )
+    elif args.moe_mode == "expert_linear_mlp":
+        for layer in model.transformer.h:
+            layer.mlp.c_fc = torch.nn.Linear(min(layer.mlp.c_fc.weight.shape), max(layer.mlp.c_fc.weight.shape))
+            layer.mlp.c_fc.bias.data.zero_()
+            layer.mlp.c_fc = linear2moe(
+                group_name="expert_linear_mlp",
+                shared_expert=layer.mlp.c_fc,
+                n_experts=args.num_experts,
+                top_k=args.experts_topk,
+                norm_topk_prob=args.experts_norm_topk,
+                use_shared_expert=args.use_shared_expert
+                )
+            layer.mlp.c_proj = torch.nn.Linear(max(layer.mlp.c_proj.weight.shape), min(layer.mlp.c_proj.weight.shape))
+            layer.mlp.c_proj.bias.data.zero_()
+            layer.mlp.c_proj = linear2moe(
+                group_name="expert_linear_mlp",
+                shared_expert=layer.mlp.c_proj,
+                n_experts=args.num_experts,
+                top_k=args.experts_topk,
+                norm_topk_prob=args.experts_norm_topk,
+                use_shared_expert=args.use_shared_expert
+                )
+    
     #######################################
-
     print(model)
 
-
-    if hasattr(exp_module, "patch_optimizer"):
-        optimizer = exp_module.patch_optimizer(model, args, experiment_args)
-    else:
-        # Optimizer
-        # Split weights in two groups, one with weight decay and the other not.
-        no_decay = ["bias", "layer_norm.weight"]
-        optimizer_grouped_parameters = [
-            {
-                "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-                "weight_decay": args.weight_decay,
-            },
-            {
-                "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-                "weight_decay": 0.0,
-            },
-        ]
-        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate, betas=(args.beta1, args.beta2), eps=args.eps, fused=not args.compile_optimizer)
+    # Optimizer
+    # Split weights in two groups, one with weight decay and the other not.
+    no_decay = ["bias", "layer_norm.weight"]
+    optimizer_grouped_parameters = [
+        {
+            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+            "weight_decay": args.weight_decay,
+        },
+        {
+            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
+            "weight_decay": 0.0,
+        },
+    ]
+    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate, betas=(args.beta1, args.beta2), eps=args.eps, fused=not args.compile_optimizer)
 
 
     # Scheduler and math around the number of training steps.
@@ -449,7 +457,7 @@ def main():
     # The trackers initializes automatically on the main process.
     if args.with_tracking:
         experiment_config = vars(args)
-        experiment_config.update(experiment_args)
+        run_name = f"gpt_moe_{args.moe_mode}_experts_{args.num_experts}_topk_{args.experts_topk}_norm_topk_{args.experts_norm_topk}"
         # TensorBoard cannot log Enums, need the raw value
         experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"]
         init_kwargs = {
@@ -458,7 +466,9 @@ def main():
                     "name": f"{run_name}",
                 }
         }
-        accelerator.init_trackers(experiment_args["experiment"]+"_gpt", experiment_config, init_kwargs=init_kwargs)
+        accelerator.init_trackers(project_name="gpt_moe", 
+                        config=experiment_config, 
+                        init_kwargs=init_kwargs)
 
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -507,13 +517,21 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(completed_steps)
 
-
     forward = torch.compile(model, mode=args.compile_mode, dynamic=args.compile_dynamic, fullgraph=args.compile_fullgraph) if args.compile else model.forward
 
     def opt_step():
         optimizer.step()
 
     opt_step = torch.compile(opt_step) if args.compile_optimizer else opt_step
+
+
+    moe_context = (
+        MoeLoadBalancingContext(
+            padding_mask=None  # NOTE: if there is sequence padding, we need to pass it in so load balancing is not applied to padding
+        )
+        if args.moe_mode != "none"
+        else nullcontext()
+    )
 
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
@@ -527,8 +545,16 @@ def main():
         for step, batch in enumerate(active_dataloader):
             model.train()
             with accelerator.accumulate(model):
-                outputs = forward(**batch)
-                loss = outputs.loss
+                with moe_context:
+                    outputs = forward(**batch)
+                orig_loss = outputs.loss
+                if args.moe_mode != "none":
+                    load_balancing_loss = moe_context.get_aux_loss("mean")
+                    loss = orig_loss + load_balancing_loss
+                else:
+                    load_balancing_loss = 0
+                    loss = orig_loss
+
                 # We keep track of the loss at each epoch
                 if args.with_tracking:
                     total_loss += loss.detach().float()
@@ -536,6 +562,8 @@ def main():
                 # clip the gradients
                 mini_logs ={
                         "step_loss": loss.detach().float(),
+                        "load_balancing_loss": load_balancing_loss.detach().float(),
+                        "orig_loss": orig_loss.detach().float(),
                         "lr": lr_scheduler.get_last_lr()[0],
                     }
                 if args.max_grad_norm is not None:
