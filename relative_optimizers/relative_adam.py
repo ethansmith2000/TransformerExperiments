@@ -1,6 +1,4 @@
-import os
 import torch
-import torch.distributed as dist
 
 
 class RelativeAdam(torch.optim.Optimizer):
@@ -63,15 +61,23 @@ class RelativeAdam(torch.optim.Optimizer):
                 # regular update
                 p.data.add_(g, alpha=-(group['lr'] * group['lr_weight']) / scale)
 
-                # parameter-level learning rate
-
+                # parameter-level learning rate (relative update)
+                # Use direction from normalized gradient, magnitude from parameter
+                # This prevents explosion: as p grows, we scale proportionally but
+                # don't also multiply by gradient magnitude
+                
                 # to handle lr scheduling
                 ratio =  group['lr'] / group['orig_lr']
                 param_lr = group['param_lr'] * ratio
-
+                
+                # Compute direction (normalized gradient) and magnitude (parameter scale)
+                # g is already normalized by Adam's second moment, so we just need its sign/direction
+                g_normalized = g / (g.abs() + group['eps'])  # Pure direction
+                relative_update = g_normalized * (p.abs() + group['param_eps'])  # Scale by param magnitude
+                
                 p.data.add_(
                     torch.clamp(
-                        g * (p.abs() + group['param_eps']),
+                        relative_update,
                         max=group['lr_cap'],
                         min=-group['lr_cap']
                     ),

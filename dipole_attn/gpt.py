@@ -180,12 +180,6 @@ class NewGPT2Attention(GPT2Attention):
     def __init__(self, config, is_cross_attention=False, layer_idx=None, offset=5, neg_version=False, include_o=False, normalized=False, learnable_softmax=False, inner_offset=0):
         super().__init__(config, is_cross_attention=False, layer_idx=None)
         self.neg_version = neg_version
-        self.offset = offset
-        self.normalized_attention = normalized
-        if learnable_softmax:
-            self.softmax_temp = nn.Parameter(torch.ones(1,self.heads,1,1) * 10)
-        else:
-            self.softmax_temp = None
         
         if not self.neg_version:
             self.c_attn = Conv1D(4 * self.embed_dim, self.embed_dim)
@@ -194,78 +188,43 @@ class NewGPT2Attention(GPT2Attention):
         else:
             self.c_proj_2 = None
 
-        self.inner_offset = inner_offset
-
-        self.pos_weight = nn.Parameter(torch.ones(1,self.num_heads,1,1))
-        self.neg_weight = nn.Parameter(torch.ones(1,self.num_heads,1,1))
-        
-    # def kernel(self, x):
-    #     return torch.exp(torch.abs(x + self.inner_offset) - self.offset)
 
     def _attn(self, query, key, value, value2, attention_mask=None, head_mask=None):
-        # scale = query.size(-1) ** 0.5
-        # if self.normalized_attention:
-        #     query = normalize(query)
-        #     key = normalize(key)
-        #     if self.softmax_temp is not None:
-        #         query = query * self.softmax_temp
-
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
 
-        if self.scale_attn_weights:
-            attn_weights = attn_weights / torch.full(
-                [], value.size(-1) ** 0.5, dtype=attn_weights.dtype, device=attn_weights.device
-            )
+        attn_weights = attn_weights / torch.full(
+            [], value.size(-1) ** 0.5, dtype=attn_weights.dtype, device=attn_weights.device
+        )
 
-        # Layer-wise attention scaling
-        if self.scale_attn_by_inverse_layer_idx:
-            attn_weights = attn_weights / float(self.layer_idx + 1)
-
-        if not self.is_cross_attention:
-            # if only "normal" attention layer implements causal mask
-            query_length, key_length = query.size(-2), key.size(-2)
-            causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
-            mask_value_min = torch.finfo(attn_weights.dtype).min
-            # mask_value_max = torch.finfo(attn_weights.dtype).max
-            # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
-            # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-            mask_value_min = torch.full([], mask_value_min, dtype=attn_weights.dtype, device=attn_weights.device)
-            # mask_value_max = torch.full([], mask_value_max, dtype=attn_weights.dtype, device=attn_weights.device)
-            attn_weights_pos = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value_min)
-            # attn_weights_neg = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value_max)
+        # if only "normal" attention layer implements causal mask
+        query_length, key_length = query.size(-2), key.size(-2)
+        causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
+        mask_value = 0
+        # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
+        # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
+        mask_value = torch.full([], mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
+        attn_weights = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value)
 
         if attention_mask is not None:
             # Apply the attention mask
-            attn_weights_pos = attn_weights_pos + attention_mask
+            attn_weights = attn_weights + attention_mask
 
-        #####
-        # value_mask = (attn_weights > 0).to(attn_weights.dtype)
-        attn_weights_pos = torch.exp(attn_weights_pos)
-        attn_weights_neg = torch.where(causal_mask, 1 / (attn_weights_pos + 1e-6), torch.zeros_like(attn_weights_pos))
-        attn_weights_pos = attn_weights_pos / torch.sum(attn_weights_pos, dim=-1, keepdim=True)
-        attn_weights_neg = attn_weights_neg / torch.sum(attn_weights_neg, dim=-1, keepdim=True)
-
-
-        # attn_weights_neg = torch.exp(attn_weights_neg * -1)
-        # attn_weights_neg = attn_weights_neg / torch.sum(attn_weights_neg, dim=-1, keepdim=True)
-        #####
-
-        # attn_weights = nn.functional.softmax(attn_weights, dim=-1)
-
-        # Downcast (if necessary) back to V's dtype (if in mixed-precision) -- No-Op otherwise
-        attn_weights_pos = attn_weights_pos.type(value.dtype)
-        attn_weights_pos = self.attn_dropout(attn_weights_pos)
-        attn_weights_neg = attn_weights_neg.type(value.dtype)
-        attn_weights_neg = self.attn_dropout(attn_weights_neg)
-
-        # Mask heads if we want to
-        if head_mask is not None:
-            attn_weights_pos = attn_weights_pos * head_mask
+        # Stable dual-branch normalization
+        signs = torch.sign(attn_weights).clamp(min=0)
+        pos_mask = signs
+        neg_mask = 1 - pos_mask
+        attn_weights_abs = torch.abs(attn_weights)
+        attn_weights = (1 / (-attn_weights_abs + 1e-10)) + attn_weights_abs
+        attn_weights = torch.softmax(attn_weights, dim=-1).type(value.dtype)
+        attn_weights_pos = attn_weights * pos_mask
+        attn_weights_neg = attn_weights * neg_mask
 
         attn_output_one = torch.matmul(attn_weights_pos, value)
         attn_output_two = torch.matmul(attn_weights_neg, value2)
 
-        return attn_output_one, attn_output_two, attn_weights_pos
+        attn_output = attn_output_one + attn_output_two
+
+        return attn_output, attn_weights_pos
 
     def forward(
         self,
@@ -279,10 +238,12 @@ class NewGPT2Attention(GPT2Attention):
         output_attentions: Optional[bool] = False,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
 
+        chunk_size = max(self.c_attn.weight.shape) // min(self.c_attn.weight.shape)
+
         if not self.neg_version:
-            query, key, value, value2 = self.c_attn(hidden_states).split(self.split_size, dim=2)
+            query, key, value, value2 = self.c_attn(hidden_states).split(chunk_size, dim=2)
         else:
-            query, key, value = self.c_attn(hidden_states).split(self.split_size, dim=2)
+            query, key, value = self.c_attn(hidden_states).split(chunk_size, dim=2)
             value2 = value * -1
 
         query = self._split_heads(query, self.num_heads, self.head_dim)
@@ -301,23 +262,10 @@ class NewGPT2Attention(GPT2Attention):
         else:
             present = None
 
-        if self.reorder_and_upcast_attn:
-            attn_output_one, attn_output_two, attn_weights = self._upcast_and_reordered_attn(query, key, value, value2, attention_mask, head_mask)
-        else:
-            attn_output_one, attn_output_two, attn_weights = self._attn(query, key, value, value2, attention_mask, head_mask)
+        attn_output, attn_weights = self._attn(query, key, value, value2, attention_mask, head_mask)
 
-        # attn_output = attn_output_one * value_mask + attn_output_two * (1 - value_mask)
-
-        if self.c_proj_2 is not None:
-            attn_output_one = self._merge_heads(attn_output_one, self.num_heads, self.head_dim)
-            attn_output_one = self.c_proj(attn_output_one)
-            attn_output_two = self._merge_heads(attn_output_two, self.num_heads, self.head_dim)
-            attn_output_two = self.c_proj_2(attn_output_two)
-            attn_output = attn_output_one + attn_output_two
-        else:
-            attn_output = attn_output_one * self.pos_weight + attn_output_two * self.neg_weight
-            attn_output = self._merge_heads(attn_output, self.num_heads, self.head_dim)
-            attn_output = self.c_proj(attn_output)
+        attn_output = self._merge_heads(attn_output, self.num_heads, self.head_dim)
+        attn_output = self.c_proj(attn_output)
             
         attn_output = self.resid_dropout(attn_output)
 
